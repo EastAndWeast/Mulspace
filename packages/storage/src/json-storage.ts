@@ -67,7 +67,7 @@ function createInitialSeedState(now = Date.now()): PersistedBrowserState {
       webrtcPolicy: 'disable_non_proxied_udp',
     },
     proxy: {
-      mode: 'direct',
+      mode: 'system',
     },
     agentPolicy: {
       enabled: true,
@@ -92,7 +92,7 @@ function createInitialSeedState(now = Date.now()): PersistedBrowserState {
       webrtcPolicy: 'disable_non_proxied_udp',
     },
     proxy: {
-      mode: 'direct',
+      mode: 'system',
     },
     agentPolicy: {
       enabled: true,

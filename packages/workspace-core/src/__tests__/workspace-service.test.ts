@@ -38,6 +38,7 @@ describe('WorkspaceService', () => {
     expect(wsB.partition).toBe(`persist:ws-${wsB.id}`)
     expect(wsA.partition).not.toBe(wsB.partition)
     expect(wsA.isolation.webrtcPolicy).toBe('disable_non_proxied_udp')
+    expect(wsA.proxy.mode).toBe('system')
     expect(wsA.agentPolicy.allowCrossWorkspaceRead).toBe(false)
 
     // Delete down to 1 workspace, then deleting the last one must throw

@@ -21,6 +21,7 @@ import type { UpdateService } from '@wb/updater'
 import type { WorkspaceService } from '@wb/workspace-core'
 import { BaseWindow, WebContentsView, session, type WebContents } from 'electron'
 import { join } from 'node:path'
+import { buildLoadErrorHtml } from './error-page.js'
 
 interface ManagedWindow {
   id: WindowId
@@ -529,9 +530,11 @@ export class BrowserWindowManager
 
     const syncNav = (): void => {
       if (wc.isDestroyed()) return
+      const currentUrl = wc.getURL()
+      if (currentUrl.startsWith('data:text/html')) return
       void this.tabLifecycle.updateTabMeta(workspaceId, tabId, {
-        url: wc.getURL(),
-        title: wc.getTitle() || wc.getURL(),
+        url: currentUrl,
+        title: wc.getTitle() || currentUrl,
         canGoBack: wc.navigationHistory.canGoBack(),
         canGoForward: wc.navigationHistory.canGoForward(),
       })
@@ -552,13 +555,36 @@ export class BrowserWindowManager
     })
     wc.on('did-stop-loading', () => {
       if (wc.isDestroyed()) return
+      const currentUrl = wc.getURL()
+      if (currentUrl.startsWith('data:text/html')) {
+        void this.tabLifecycle.updateTabMeta(workspaceId, tabId, { loading: false })
+        return
+      }
       void this.tabLifecycle.updateTabMeta(workspaceId, tabId, {
         loading: false,
-        url: wc.getURL(),
-        title: wc.getTitle() || wc.getURL(),
+        url: currentUrl,
+        title: wc.getTitle() || currentUrl,
         canGoBack: wc.navigationHistory.canGoBack(),
         canGoForward: wc.navigationHistory.canGoForward(),
       })
+    })
+    wc.on('did-fail-load', (_e, errorCode, errorDescription, validatedURL, isMainFrame) => {
+      if (wc.isDestroyed() || !isMainFrame) return
+      if (errorCode === -3 || !validatedURL || validatedURL.startsWith('data:')) return
+      const ws = this.workspaceService.get(workspaceId)
+      const html = buildLoadErrorHtml({
+        url: validatedURL,
+        errorCode,
+        errorDescription,
+        workspaceName: ws?.name ?? workspaceId,
+        proxyMode: ws?.proxy.mode ?? 'system',
+      })
+      void this.tabLifecycle.updateTabMeta(workspaceId, tabId, {
+        loading: false,
+        url: validatedURL,
+        title: '无法访问此网站',
+      })
+      void wc.loadURL(`data:text/html;charset=utf-8,${encodeURIComponent(html)}`).catch(() => undefined)
     })
     wc.on('media-started-playing', () => {
       void this.tabLifecycle.updateTabMeta(workspaceId, tabId, { audible: true })

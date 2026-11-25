@@ -114,7 +114,7 @@ export class WorkspaceService implements IKernelModule {
         webrtcPolicy: input.isolation?.webrtcPolicy ?? 'disable_non_proxied_udp',
       },
       proxy: {
-        mode: input.proxy?.mode ?? 'direct',
+        mode: input.proxy?.mode ?? 'system',
         customUrl: input.proxy?.customUrl,
         nodeId: input.proxy?.nodeId,
         groupName: input.proxy?.groupName,

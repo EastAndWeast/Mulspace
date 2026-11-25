@@ -51,6 +51,7 @@ export function App() {
   const [agentBusy, setAgentBusy] = useState(false)
 
   const viewportRef = useRef<HTMLDivElement | null>(null)
+  const omniboxRef = useRef<HTMLInputElement | null>(null)
 
   useEffect(() => {
     void window.browserApi.getState().then(setSnapshot)
@@ -82,7 +83,7 @@ export function App() {
   }, [activeWorkspace, workspaceTabs])
 
   useEffect(() => {
-    if (activeTab) {
+    if (activeTab && document.activeElement !== omniboxRef.current) {
       setAddressInput(activeTab.url)
     }
   }, [activeTab?.id, activeTab?.url])
@@ -152,6 +153,7 @@ export function App() {
   const handleNavigateSubmit = (e: React.FormEvent): void => {
     e.preventDefault()
     if (!activeTab) return
+    omniboxRef.current?.blur()
     void window.browserApi.navigateTab(activeWorkspace.id, activeTab.id, addressInput)
   }
 
@@ -328,6 +330,7 @@ export function App() {
 
             <form onSubmit={handleNavigateSubmit} style={{ flex: 1, display: 'flex' }}>
               <input
+                ref={omniboxRef}
                 className="wb-omnibox"
                 value={addressInput}
                 onChange={(e) => setAddressInput(e.target.value)}
