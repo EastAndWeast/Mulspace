@@ -3,6 +3,16 @@ import type { McpHostConfig, McpHostStatus, Workspace, WorkspaceId } from '@wb/c
 import type { ICdpAutomationBridge } from './cdp-automation.js'
 import { WorkspaceBoundaryGuard } from './security-guard.js'
 
+class McpRpcError extends Error {
+  constructor(
+    readonly code: number,
+    message: string,
+  ) {
+    super(message)
+    this.name = 'McpRpcError'
+  }
+}
+
 interface JsonRpcRequest {
   jsonrpc?: string
   id?: string | number | null
@@ -235,7 +245,24 @@ export class BrowserMcpServer {
         return
       }
 
+      const rawObj = parsed as Record<string, unknown>
       const rpc = parsed as JsonRpcRequest
+      if (
+        ('jsonrpc' in rawObj && rawObj.jsonrpc !== '2.0') ||
+        typeof rawObj.method !== 'string' ||
+        !rawObj.method.trim()
+      ) {
+        res.writeHead(400, { 'Content-Type': 'application/json' })
+        res.end(
+          JSON.stringify({
+            jsonrpc: '2.0',
+            id: rpc.id ?? null,
+            error: { code: -32600, message: 'Invalid Request: missing method' },
+          }),
+        )
+        return
+      }
+
       try {
         const result = await this.dispatchRpc(rpc)
         res.writeHead(200, { 'Content-Type': 'application/json' })
@@ -247,7 +274,7 @@ export class BrowserMcpServer {
             jsonrpc: '2.0',
             id: rpc.id ?? null,
             error: {
-              code: -32000,
+              code: err instanceof McpRpcError ? err.code : -32000,
               message: err instanceof Error ? err.message : String(err),
             },
           }),
@@ -289,7 +316,7 @@ export class BrowserMcpServer {
       const text = await this.executeTool(name, args)
       return { content: [{ type: 'text', text }] }
     }
-    throw new Error(`Unknown MCP method: ${rpc.method}`)
+    throw new McpRpcError(-32601, `Method not found: ${rpc.method}`)
   }
 
   private async executeTool(name: string, args: Record<string, unknown>): Promise<string> {

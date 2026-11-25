@@ -52,6 +52,14 @@ export function diagnoseChromiumError(
       isSslOrConnection: false,
     }
   }
+  if (errorCode === -127 || errorDescription.includes('ERR_PROXY_AUTH')) {
+    return {
+      title: '代理服务器认证失败（HTTP 407）',
+      summary:
+        '当前工作区配置的代理账号或密码被代理服务器拒绝，请点击地址栏右侧的代理徽章更正凭据后重试。',
+      isSslOrConnection: false,
+    }
+  }
   if (
     errorCode === -130 ||
     errorCode === -131 ||

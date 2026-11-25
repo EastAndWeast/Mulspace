@@ -149,7 +149,7 @@ async function bootstrap(): Promise<void> {
   // Inject proxy credentials per workspace partition when Electron challenges for proxy auth,
   // but abort immediately if the same credentials are rejected twice in a short window.
   const proxyAuthAttempts = new Map<string, { count: number; ts: number }>()
-  app.on('login', (event, webContents, _details, authInfo, callback) => {
+  app.on('login', (event, webContents, details, authInfo, callback) => {
     if (!authInfo.isProxy) return
     const allWorkspaces = workspaceService.list()
     for (const ws of allWorkspaces) {
@@ -165,6 +165,12 @@ async function bootstrap(): Promise<void> {
       if (count > 2) {
         event.preventDefault()
         callback()
+        windowManager.showProxyAuthFailedError(
+          webContents,
+          details.url,
+          authInfo.host,
+          authInfo.port,
+        )
         return
       }
       event.preventDefault()

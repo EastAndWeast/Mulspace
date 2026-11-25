@@ -233,18 +233,33 @@ scope: ws_1
     const fileNavJson = (await fileNavRes.json()) as { error?: { message: string } }
     expect(fileNavJson.error?.message).toContain('安全护栏拦截')
 
-    // JSON-RPC `null` body returns 400 Invalid Request promptly instead of hanging
-    const nullRes = await fetch(status.endpointUrl!, {
+    // JSON-RPC `null` or empty `{}` body returns 400 Invalid Request (-32600) promptly instead of hanging
+    for (const rawBody of ['null', '{}']) {
+      const badReqRes = await fetch(status.endpointUrl!, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          Authorization: 'Bearer secret-token-123',
+        },
+        body: rawBody,
+      })
+      expect(badReqRes.status).toBe(400)
+      const badReqJson = (await badReqRes.json()) as { error?: { code: number } }
+      expect(badReqJson.error?.code).toBe(-32600)
+    }
+
+    // Genuine unknown method returns -32601 Method not found
+    const unknownMethodRes = await fetch(status.endpointUrl!, {
       method: 'POST',
       headers: {
         'Content-Type': 'application/json',
         Authorization: 'Bearer secret-token-123',
       },
-      body: 'null',
+      body: JSON.stringify({ jsonrpc: '2.0', id: 7, method: 'unknown/method' }),
     })
-    expect(nullRes.status).toBe(400)
-    const nullJson = (await nullRes.json()) as { error?: { code: number } }
-    expect(nullJson.error?.code).toBe(-32600)
+    expect(unknownMethodRes.status).toBe(200)
+    const unknownMethodJson = (await unknownMethodRes.json()) as { error?: { code: number } }
+    expect(unknownMethodJson.error?.code).toBe(-32601)
 
     // Unknown POST path returns 404
     const badPathRes = await fetch(status.endpointUrl!.replace(/\/mcp$/, '/wrong'), {

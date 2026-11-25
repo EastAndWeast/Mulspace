@@ -374,10 +374,32 @@ export class BrowserWindowManager
     }
 
     baseWindow.on('resize', syncChromeSize)
+    baseWindow.on('focus', () => {
+      if (!managed.attachedTabId || managed.overlayOpen) return
+      const view = this.tabViews.get(managed.attachedTabId)
+      if (view && !view.webContents.isDestroyed()) {
+        view.setVisible(true)
+        view.webContents.setBackgroundThrottling(false)
+        view.webContents.invalidate()
+      }
+    })
     baseWindow.on('closed', () => {
+      const attachedTabId = managed.attachedTabId
+      const attachedTabWsId = attachedTabId ? this.tabIdToWorkspaceId.get(attachedTabId) : undefined
       this.chromeWebContentsToWindowId.delete(chromeView.webContents.id)
       this.windows.delete(windowId)
       this.workspaceService.unbindWindow(windowId)
+
+      if (!chromeView.webContents.isDestroyed()) {
+        chromeView.webContents.close({ waitForBeforeUnload: false })
+      }
+      if (attachedTabId && !this.isTabAttachedElsewhere(attachedTabId, windowId)) {
+        if (attachedTabWsId) {
+          void this.tabLifecycle.discardTab(attachedTabWsId, attachedTabId, true)
+        } else {
+          this.destroyView(attachedTabId)
+        }
+      }
     })
 
     syncChromeSize()
@@ -745,13 +767,67 @@ export class BrowserWindowManager
     }
   }
 
+  showProxyAuthFailedError(wc: WebContents, targetUrl: string, host: string, port: number): void {
+    if (wc.isDestroyed()) return
+    let matchedTabId: TabId | undefined
+    for (const [tId, view] of this.tabViews.entries()) {
+      if (view.webContents === wc) {
+        matchedTabId = tId
+        break
+      }
+    }
+    if (!matchedTabId) return
+
+    const currentUrl = wc.getURL()
+    if (currentUrl.startsWith('data:text/html')) return
+
+    const resolvedUrl = targetUrl || currentUrl || `http://${host}:${port}/`
+    const workspaceId = this.tabIdToWorkspaceId.get(matchedTabId)
+    const ws = workspaceId ? this.workspaceService.get(workspaceId) : undefined
+    this.failedTabUrls.set(matchedTabId, resolvedUrl)
+
+    const html = buildLoadErrorHtml({
+      url: resolvedUrl,
+      errorCode: -127,
+      errorDescription: `ERR_PROXY_AUTH_FAILED (HTTP 407 代理账号或密码错误: ${host}:${port})`,
+      workspaceName: ws?.name ?? workspaceId ?? '',
+      proxyMode: ws?.proxy.mode ?? 'custom',
+    })
+
+    if (workspaceId) {
+      void this.tabLifecycle.updateTabMeta(workspaceId, matchedTabId, {
+        loading: false,
+        url: resolvedUrl,
+        title: '代理服务器认证失败（HTTP 407）',
+      })
+    }
+
+    setImmediate(() => {
+      if (wc.isDestroyed()) return
+      wc.stop()
+      void wc.loadURL(`data:text/html;charset=utf-8,${encodeURIComponent(html)}`).catch(() => undefined)
+    })
+  }
+
   async captureSnapshot(tabId: TabId): Promise<Partial<TabSnapshot> | null> {
     const view = this.tabViews.get(tabId)
     if (!view || view.webContents.isDestroyed()) return null
+    if (view.webContents.isLoadingMainFrame() || view.webContents.isLoading()) {
+      return {
+        url: view.webContents.getURL(),
+        title: view.webContents.getTitle(),
+      }
+    }
+    let timer: ReturnType<typeof setTimeout> | undefined
     try {
-      const scroll = (await view.webContents.executeJavaScript(
-        '({ x: window.scrollX || 0, y: window.scrollY || 0 })',
-      )) as { x?: number; y?: number }
+      const scroll = await Promise.race([
+        view.webContents.executeJavaScript(
+          '({ x: window.scrollX || 0, y: window.scrollY || 0 })',
+        ) as Promise<{ x?: number; y?: number }>,
+        new Promise<null>((resolve) => {
+          timer = setTimeout(() => resolve(null), 500)
+        }),
+      ])
       return {
         url: view.webContents.getURL(),
         title: view.webContents.getTitle(),
@@ -763,6 +839,8 @@ export class BrowserWindowManager
         url: view.webContents.getURL(),
         title: view.webContents.getTitle(),
       }
+    } finally {
+      if (timer) clearTimeout(timer)
     }
   }
 
