@@ -44,6 +44,7 @@ export interface BrowserWindowSnapshot {
   extensions: InstalledExtension[]
   mcpHostStatus: McpHostStatus
   updateState: UpdateState
+  aiMessageSeq?: number
 }
 
 export const IPC_CHANNELS = {

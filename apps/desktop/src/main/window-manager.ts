@@ -56,6 +56,7 @@ export class BrowserWindowManager
   private readonly proxyAuthByPartition = new Map<string, { username: string; password: string }>()
 
   private windowSeq = 0
+  private aiMessageSeq = 0
   private tabLifecycle!: TabLifecycleManager
   private proxyService?: ProxyService
   private extensionService?: ExtensionService
@@ -102,6 +103,10 @@ export class BrowserWindowManager
     this.kernel.events.on('extensions:updated', broadcastAll)
     this.kernel.events.on('themes:updated', broadcastAll)
     this.kernel.events.on('update:state-changed', broadcastAll)
+    this.kernel.events.on('ai:message', () => {
+      this.aiMessageSeq++
+      broadcastAll()
+    })
   }
 
   getProxyAuthForPartition(partition: string): { username: string; password: string } | undefined {
@@ -344,6 +349,7 @@ export class BrowserWindowManager
         latestVersion: null,
         repoSlug: 'EastAndWeast/Mulspace',
       },
+      aiMessageSeq: this.aiMessageSeq,
     }
   }
 

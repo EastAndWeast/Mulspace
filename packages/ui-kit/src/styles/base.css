@@ -37,6 +37,8 @@ textarea {
   height: 34px;
   font-size: 13px;
   font-weight: 500;
+  white-space: nowrap;
+  flex-shrink: 0;
   cursor: pointer;
   transition: filter 140ms ease, background-color 140ms ease, border-color 140ms ease;
 }

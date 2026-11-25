@@ -91,7 +91,7 @@ export function App() {
     if (!activeWorkspace) return
     void window.browserApi.getAgentMessages(activeWorkspace.id).then(setAgentMessages)
     void window.browserApi.listSkills(activeWorkspace.id).then(setSkills)
-  }, [activeWorkspace?.id])
+  }, [activeWorkspace?.id, snapshot?.aiMessageSeq])
 
   const syncViewportBounds = useCallback(() => {
     const el = viewportRef.current
