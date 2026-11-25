@@ -1,0 +1,24 @@
+{
+  "name": "workspace-browser",
+  "version": "0.1.0",
+  "private": true,
+  "description": "Multi-account workspace AI browser with microkernel architecture and Material 3 theme separation",
+  "scripts": {
+    "dev": "pnpm --filter @wb/desktop dev",
+    "build": "pnpm --filter \"./packages/*\" build && pnpm --filter @wb/desktop build",
+    "test": "vitest run",
+    "typecheck": "pnpm -r typecheck",
+    "package:dir": "pnpm build && pnpm --filter @wb/desktop package:dir",
+    "package:mac": "pnpm build && pnpm --filter @wb/desktop package:mac",
+    "package:win": "pnpm build && pnpm --filter @wb/desktop package:win",
+    "clean": "pnpm -r clean && rm -rf node_modules"
+  },
+  "devDependencies": {
+    "@types/node": "^22.15.0",
+    "typescript": "^5.8.2",
+    "vitest": "^3.1.1"
+  },
+  "engines": {
+    "node": ">=20.0.0"
+  }
+}

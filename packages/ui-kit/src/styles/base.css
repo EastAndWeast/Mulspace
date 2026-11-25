@@ -1,0 +1,190 @@
+*,
+*::before,
+*::after {
+  box-sizing: border-box;
+}
+
+html,
+body,
+#root {
+  margin: 0;
+  padding: 0;
+  width: 100%;
+  height: 100%;
+  overflow: hidden;
+  font-family: var(--wb-sys-font-sans);
+  background-color: var(--wb-sys-color-surface);
+  color: var(--wb-sys-color-on-surface);
+  -webkit-font-smoothing: antialiased;
+  user-select: none;
+}
+
+button,
+input,
+select,
+textarea {
+  font-family: inherit;
+}
+
+.wb-btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: var(--wb-sys-spacing-xs);
+  border-radius: var(--wb-sys-radius-full);
+  border: 1px solid transparent;
+  padding: 0 var(--wb-sys-spacing-md);
+  height: 34px;
+  font-size: 13px;
+  font-weight: 500;
+  cursor: pointer;
+  transition: filter 140ms ease, background-color 140ms ease, border-color 140ms ease;
+}
+
+.wb-btn:hover:not(:disabled) {
+  filter: brightness(1.06);
+}
+
+.wb-btn:disabled {
+  opacity: 0.45;
+  cursor: not-allowed;
+}
+
+.wb-btn--filled {
+  background-color: var(--wb-sys-color-primary);
+  color: var(--wb-sys-color-on-primary);
+}
+
+.wb-btn--tonal {
+  background-color: var(--wb-sys-color-secondary-container);
+  color: var(--wb-sys-color-on-secondary-container);
+}
+
+.wb-btn--outlined {
+  background-color: transparent;
+  border-color: var(--wb-sys-color-outline);
+  color: var(--wb-sys-color-primary);
+}
+
+.wb-btn--text {
+  background-color: transparent;
+  color: var(--wb-sys-color-primary);
+  padding: 0 var(--wb-sys-spacing-sm);
+}
+
+.wb-btn--danger {
+  background-color: var(--wb-sys-color-error-container);
+  color: var(--wb-sys-color-on-error-container);
+}
+
+.wb-icon-btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 30px;
+  height: 30px;
+  border-radius: var(--wb-sys-radius-sm);
+  border: none;
+  background: transparent;
+  color: var(--wb-sys-color-on-surface-variant);
+  cursor: pointer;
+  transition: background-color 120ms ease, color 120ms ease;
+}
+
+.wb-icon-btn:hover:not(:disabled) {
+  background-color: var(--wb-sys-color-surface-container-highest);
+  color: var(--wb-sys-color-on-surface);
+}
+
+.wb-icon-btn:disabled {
+  opacity: 0.35;
+  cursor: not-allowed;
+}
+
+.wb-input {
+  width: 100%;
+  height: 36px;
+  padding: 0 var(--wb-sys-spacing-md);
+  border-radius: var(--wb-sys-radius-sm);
+  border: 1px solid var(--wb-sys-color-outline-variant);
+  background-color: var(--wb-sys-color-surface-container-lowest);
+  color: var(--wb-sys-color-on-surface);
+  font-size: 13px;
+  outline: none;
+  user-select: text;
+}
+
+.wb-input:focus {
+  border-color: var(--wb-sys-color-primary);
+}
+
+.wb-badge {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  padding: 2px 8px;
+  border-radius: var(--wb-sys-radius-full);
+  font-size: 11px;
+  font-weight: 500;
+  line-height: 16px;
+  background-color: var(--wb-sys-color-surface-container-high);
+  color: var(--wb-sys-color-on-surface-variant);
+}
+
+.wb-badge--primary {
+  background-color: var(--wb-sys-color-primary-container);
+  color: var(--wb-sys-color-on-primary-container);
+}
+
+.wb-dialog-backdrop {
+  position: fixed;
+  inset: 0;
+  z-index: 1000;
+  background-color: rgba(0, 0, 0, 0.48);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: var(--wb-sys-spacing-lg);
+}
+
+.wb-dialog {
+  width: 100%;
+  max-width: 520px;
+  max-height: 85vh;
+  display: flex;
+  flex-direction: column;
+  border-radius: var(--wb-sys-radius-lg);
+  background-color: var(--wb-sys-color-surface-container-low);
+  color: var(--wb-sys-color-on-surface);
+  border: 1px solid var(--wb-sys-color-outline-variant);
+  box-shadow: 0 18px 48px rgba(0, 0, 0, 0.28);
+  overflow: hidden;
+}
+
+.wb-dialog__header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: var(--wb-sys-spacing-md) var(--wb-sys-spacing-lg);
+  border-bottom: 1px solid var(--wb-sys-color-outline-variant);
+  font-size: 15px;
+  font-weight: 600;
+}
+
+.wb-dialog__body {
+  padding: var(--wb-sys-spacing-lg);
+  overflow-y: auto;
+  display: flex;
+  flex-direction: column;
+  gap: var(--wb-sys-spacing-md);
+}
+
+.wb-dialog__footer {
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+  gap: var(--wb-sys-spacing-sm);
+  padding: var(--wb-sys-spacing-md) var(--wb-sys-spacing-lg);
+  border-top: 1px solid var(--wb-sys-color-outline-variant);
+  background-color: var(--wb-sys-color-surface-container);
+}

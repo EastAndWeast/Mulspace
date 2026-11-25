@@ -1,0 +1,46 @@
+{
+  "name": "@wb/desktop",
+  "version": "0.1.0",
+  "private": true,
+  "description": "Mulspace — Multi-account workspace AI browser",
+  "author": "EastAndWeast",
+  "type": "module",
+  "main": "./out/main/index.js",
+  "scripts": {
+    "dev": "electron-vite dev",
+    "build": "electron-vite build",
+    "preview": "electron-vite preview",
+    "package:dir": "electron-vite build && electron-builder --dir",
+    "package:mac": "electron-vite build && electron-builder --mac --publish never",
+    "package:win": "electron-vite build && electron-builder --win --publish never",
+    "typecheck": "tsc -p tsconfig.json --noEmit",
+    "clean": "rm -rf out dist release"
+  },
+  "dependencies": {
+    "@wb/ai-runtime": "workspace:*",
+    "@wb/contracts": "workspace:*",
+    "@wb/extension-host": "workspace:*",
+    "@wb/kernel": "workspace:*",
+    "@wb/proxy-engine": "workspace:*",
+    "@wb/storage": "workspace:*",
+    "@wb/tab-lifecycle": "workspace:*",
+    "@wb/themes": "workspace:*",
+    "@wb/ui-kit": "workspace:*",
+    "@wb/updater": "workspace:*",
+    "@wb/workspace-core": "workspace:*",
+    "lucide-react": "^0.511.0",
+    "react": "^19.1.0",
+    "react-dom": "^19.1.0"
+  },
+  "devDependencies": {
+    "@electron-toolkit/utils": "^4.0.0",
+    "@types/node": "^22.15.0",
+    "@types/react": "^19.1.0",
+    "@types/react-dom": "^19.1.0",
+    "@vitejs/plugin-react": "^4.5.0",
+    "electron": "^35.2.0",
+    "electron-builder": "^26.0.12",
+    "electron-vite": "^3.1.0",
+    "vite": "^6.3.5"
+  }
+}
