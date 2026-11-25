@@ -4,6 +4,18 @@ export interface LoadErrorDiagnosis {
   isSslOrConnection: boolean
 }
 
+export interface BuildLoadErrorHtmlParams {
+  url: string
+  errorCode: number
+  errorDescription: string
+  workspaceName: string
+  proxyMode: string
+  proceedUnsafeUrl?: string
+  hostname?: string
+  certSubject?: string
+  certIssuer?: string
+}
+
 function escapeHtml(raw: string): string {
   return raw
     .replace(/&/g, '&amp;')
@@ -27,8 +39,9 @@ export function diagnoseChromiumError(
   }
   if (errorCode <= -200 && errorCode >= -217) {
     return {
-      title: '网站安全证书无效',
-      summary: '目标站点的 HTTPS 证书已过期、自签名或与域名不匹配。',
+      title: '您的连接不是私密连接（网站安全证书无效）',
+      summary:
+        '目标站点的 HTTPS 证书不受信任、已过期、自签名或与域名不匹配。如果您确认目标站点安全，可以选择仅在当前工作区临时信任该证书并继续访问。',
       isSslOrConnection: true,
     }
   }
@@ -65,13 +78,7 @@ export function diagnoseChromiumError(
   }
 }
 
-export function buildLoadErrorHtml(params: {
-  url: string
-  errorCode: number
-  errorDescription: string
-  workspaceName: string
-  proxyMode: string
-}): string {
+export function buildLoadErrorHtml(params: BuildLoadErrorHtmlParams): string {
   const diag = diagnoseChromiumError(params.errorCode, params.errorDescription)
   const safeUrl = escapeHtml(params.url)
   const safeDesc = escapeHtml(params.errorDescription || `CODE_${params.errorCode}`)
@@ -79,6 +86,8 @@ export function buildLoadErrorHtml(params: {
   const safeProxy = escapeHtml(params.proxyMode)
   const canTryHttp = params.url.startsWith('https://') && diag.isSslOrConnection
   const httpFallback = canTryHttp ? params.url.replace(/^https:\/\//i, 'http://') : ''
+  const hasProceedUnsafe = Boolean(params.proceedUnsafeUrl && params.hostname)
+  const safeHost = params.hostname ? escapeHtml(params.hostname) : ''
 
   return `<!doctype html>
 <html lang="zh-CN">
@@ -98,6 +107,9 @@ export function buildLoadErrorHtml(params: {
       --primary-fg: #ffffff;
       --pill: #eff6ff;
       --pill-fg: #1d4ed8;
+      --warn-bg: #fef2f2;
+      --warn-border: #fca5a5;
+      --warn-fg: #b91c1c;
     }
     @media (prefers-color-scheme: dark) {
       :root {
@@ -110,6 +122,9 @@ export function buildLoadErrorHtml(params: {
         --primary-fg: #ffffff;
         --pill: #1e293b;
         --pill-fg: #93c5fd;
+        --warn-bg: #2a1215;
+        --warn-border: #7f1d1d;
+        --warn-fg: #fca5a5;
       }
     }
     body {
@@ -125,7 +140,7 @@ export function buildLoadErrorHtml(params: {
     }
     .card {
       width: 100%;
-      max-width: 560px;
+      max-width: 580px;
       padding: 28px 32px;
       border-radius: 16px;
       background: var(--card);
@@ -177,11 +192,17 @@ export function buildLoadErrorHtml(params: {
       font-size: 13px;
       font-weight: 500;
       cursor: pointer;
+      white-space: nowrap;
     }
     button.primary {
       background: var(--primary);
       border-color: var(--primary);
       color: var(--primary-fg);
+    }
+    button.unsafe {
+      background: var(--warn-bg);
+      border-color: var(--warn-border);
+      color: var(--warn-fg);
     }
   </style>
 </head>
@@ -193,9 +214,24 @@ export function buildLoadErrorHtml(params: {
     <div class="meta">
       <div><strong>目标地址：</strong>${safeUrl}</div>
       <div><strong>当前工作区：</strong>${safeWs}（代理模式：${safeProxy}）</div>
+      ${
+        params.certSubject || params.certIssuer
+          ? `<div><strong>证书信息：</strong>${escapeHtml(params.certSubject || '-')} / 颁发者：${escapeHtml(params.certIssuer || '-')}</div>`
+          : ''
+      }
+      ${
+        hasProceedUnsafe
+          ? `<div><strong>隔离说明：</strong>信任该证书仅在当前工作区「${safeWs}」本次会话内生效，不会影响其他账号工作区。</div>`
+          : ''
+      }
     </div>
     <div class="actions">
       <button class="primary" onclick="window.location.href=${escapeHtml(JSON.stringify(params.url))}">重新加载</button>
+      ${
+        hasProceedUnsafe
+          ? `<button id="wb-proceed-unsafe" class="unsafe" onclick="window.location.href=${escapeHtml(JSON.stringify(params.proceedUnsafeUrl!))}">继续前往 ${safeHost}（不安全）</button>`
+          : ''
+      }
       ${
         canTryHttp
           ? `<button onclick="window.location.href=${escapeHtml(JSON.stringify(httpFallback))}">尝试改用 HTTP 访问</button>`

@@ -20,6 +20,7 @@ import { defaultThemeRegistry } from '@wb/themes'
 import type { UpdateService } from '@wb/updater'
 import type { WorkspaceService } from '@wb/workspace-core'
 import { BaseWindow, WebContentsView, session, type WebContents } from 'electron'
+import { randomUUID } from 'node:crypto'
 import { join } from 'node:path'
 import { buildLoadErrorHtml } from './error-page.js'
 
@@ -55,6 +56,12 @@ export class BrowserWindowManager
   private readonly tabViews = new Map<TabId, WebContentsView>()
   private readonly tabIdToWorkspaceId = new Map<TabId, WorkspaceId>()
   private readonly proxyAuthByPartition = new Map<string, { username: string; password: string }>()
+  private readonly allowedInsecureCertHosts = new Map<WorkspaceId, Set<string>>()
+  private readonly configuredCertPartitions = new Set<string>()
+  private readonly pendingCertErrors = new Map<
+    TabId,
+    { hostname: string; url: string; error: string; subject?: string; issuer?: string; token: string }
+  >()
 
   private windowSeq = 0
   private aiMessageSeq = 0
@@ -91,7 +98,10 @@ export class BrowserWindowManager
 
     this.kernel.events.on('workspace:created', broadcastAll)
     this.kernel.events.on('workspace:updated', broadcastAll)
-    this.kernel.events.on('workspace:deleted', broadcastAll)
+    this.kernel.events.on('workspace:deleted', ({ workspaceId }) => {
+      this.allowedInsecureCertHosts.delete(workspaceId)
+      broadcastAll()
+    })
     this.kernel.events.on('workspace:switched', ({ windowId }) => {
       this.pushSnapshotToWindow(windowId)
     })
@@ -366,6 +376,7 @@ export class BrowserWindowManager
     if (this.tabViews.has(tab.id)) return
 
     const ses = session.fromPartition(workspace.partition, { cache: true })
+    this.ensureSessionCertVerifier(workspace.id, workspace.partition, ses)
     if (workspace.isolation.userAgent) {
       ses.setUserAgent(workspace.isolation.userAgent)
     }
@@ -443,6 +454,24 @@ export class BrowserWindowManager
     }
     this.tabViews.delete(tabId)
     this.tabIdToWorkspaceId.delete(tabId)
+    this.pendingCertErrors.delete(tabId)
+  }
+
+  private ensureSessionCertVerifier(
+    workspaceId: WorkspaceId,
+    partition: string,
+    ses: Electron.Session,
+  ): void {
+    if (this.configuredCertPartitions.has(partition)) return
+    this.configuredCertPartitions.add(partition)
+    ses.setCertificateVerifyProc((request, callback) => {
+      const allowed = this.allowedInsecureCertHosts.get(workspaceId)
+      if (allowed && allowed.has(request.hostname.toLowerCase())) {
+        callback(0)
+        return
+      }
+      callback(-3)
+    })
   }
 
   setBackgroundThrottling(tabId: TabId, enabled: boolean): void {
@@ -532,6 +561,7 @@ export class BrowserWindowManager
       if (wc.isDestroyed()) return
       const currentUrl = wc.getURL()
       if (currentUrl.startsWith('data:text/html')) return
+      this.pendingCertErrors.delete(tabId)
       void this.tabLifecycle.updateTabMeta(workspaceId, tabId, {
         url: currentUrl,
         title: wc.getTitle() || currentUrl,
@@ -539,6 +569,53 @@ export class BrowserWindowManager
         canGoForward: wc.navigationHistory.canGoForward(),
       })
     }
+
+    wc.on('certificate-error', (event, url, error, certificate, callback) => {
+      let hostname = ''
+      try {
+        hostname = new URL(url).hostname.toLowerCase()
+      } catch {
+        hostname = ''
+      }
+      if (hostname && this.allowedInsecureCertHosts.get(workspaceId)?.has(hostname)) {
+        event.preventDefault()
+        callback(true)
+        return
+      }
+      if (hostname) {
+        this.pendingCertErrors.set(tabId, {
+          hostname,
+          url,
+          error,
+          subject: certificate?.subjectName,
+          issuer: certificate?.issuerName,
+          token: randomUUID(),
+        })
+      }
+      callback(false)
+    })
+
+    wc.on('will-navigate', (event, navUrl) => {
+      if (!navUrl.startsWith('http://mulspace.internal/proceed-unsafe')) return
+      event.preventDefault()
+      let token = ''
+      try {
+        token = new URL(navUrl).searchParams.get('token') ?? ''
+      } catch {
+        return
+      }
+      const pending = this.pendingCertErrors.get(tabId)
+      if (!pending || !token || pending.token !== token) return
+
+      let allowed = this.allowedInsecureCertHosts.get(workspaceId)
+      if (!allowed) {
+        allowed = new Set<string>()
+        this.allowedInsecureCertHosts.set(workspaceId, allowed)
+      }
+      allowed.add(pending.hostname)
+      this.pendingCertErrors.delete(tabId)
+      void wc.loadURL(pending.url).catch(() => undefined)
+    })
 
     wc.on('did-navigate', syncNav)
     wc.on('did-navigate-in-page', syncNav)
@@ -572,12 +649,35 @@ export class BrowserWindowManager
       if (wc.isDestroyed() || !isMainFrame) return
       if (errorCode === -3 || !validatedURL || validatedURL.startsWith('data:')) return
       const ws = this.workspaceService.get(workspaceId)
+
+      let pendingCert = this.pendingCertErrors.get(tabId)
+      if (!pendingCert && errorCode <= -200 && errorCode >= -217) {
+        try {
+          const hostname = new URL(validatedURL).hostname.toLowerCase()
+          pendingCert = {
+            hostname,
+            url: validatedURL,
+            error: errorDescription,
+            token: randomUUID(),
+          }
+          this.pendingCertErrors.set(tabId, pendingCert)
+        } catch {
+          // Ignore malformed URL
+        }
+      }
+
       const html = buildLoadErrorHtml({
         url: validatedURL,
         errorCode,
         errorDescription,
         workspaceName: ws?.name ?? workspaceId,
         proxyMode: ws?.proxy.mode ?? 'system',
+        proceedUnsafeUrl: pendingCert
+          ? `http://mulspace.internal/proceed-unsafe?token=${encodeURIComponent(pendingCert.token)}`
+          : undefined,
+        hostname: pendingCert?.hostname,
+        certSubject: pendingCert?.subject,
+        certIssuer: pendingCert?.issuer,
       })
       void this.tabLifecycle.updateTabMeta(workspaceId, tabId, {
         loading: false,
