@@ -62,10 +62,15 @@ export const IPC_CHANNELS = {
   TAB_BACK: 'wb:tab:back',
   TAB_FORWARD: 'wb:tab:forward',
   TAB_RELOAD: 'wb:tab:reload',
+  TAB_CLEAR_CACHE_AND_RELOAD: 'wb:tab:clear-cache-reload',
+  TAB_TOGGLE_MUTE: 'wb:tab:toggle-mute',
   TAB_PIN: 'wb:tab:pin',
   TAB_DISCARD: 'wb:tab:discard',
   TAB_RESTORE: 'wb:tab:restore',
   TAB_OPEN_DEVTOOLS: 'wb:tab:open-devtools',
+  TAB_SHOW_CONTEXT_MENU: 'wb:tab:show-context-menu',
+  TOOLBAR_SHOW_RELOAD_MENU: 'wb:toolbar:show-reload-menu',
+  CHROME_FOCUS_OMNIBOX: 'wb:chrome:focus-omnibox',
   TAB_SWEEP_MEMORY: 'wb:tab:sweep-memory',
   VIEWPORT_SET_BOUNDS: 'wb:viewport:set-bounds',
   WINDOW_SET_OVERLAY_OPEN: 'wb:window:set-overlay-open',
@@ -126,7 +131,12 @@ export interface BrowserApi {
   navigateTab(workspaceId: WorkspaceId, tabId: TabId, urlOrQuery: string): Promise<void>
   goBack(workspaceId: WorkspaceId, tabId: TabId): Promise<void>
   goForward(workspaceId: WorkspaceId, tabId: TabId): Promise<void>
-  reloadTab(workspaceId: WorkspaceId, tabId: TabId): Promise<void>
+  reloadTab(workspaceId: WorkspaceId, tabId: TabId, ignoreCache?: boolean): Promise<void>
+  clearCacheAndReloadTab(workspaceId: WorkspaceId, tabId: TabId): Promise<void>
+  toggleMuteTab(workspaceId: WorkspaceId, tabId: TabId): Promise<void>
+  showTabContextMenu(workspaceId: WorkspaceId, tabId: TabId): Promise<void>
+  showReloadMenu(workspaceId: WorkspaceId, tabId: TabId): Promise<void>
+  onFocusOmnibox(listener: () => void): () => void
   togglePinTab(workspaceId: WorkspaceId, tabId: TabId): Promise<void>
   discardTab(workspaceId: WorkspaceId, tabId: TabId): Promise<void>
   restoreTab(workspaceId: WorkspaceId, tabId: TabId): Promise<void>

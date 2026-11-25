@@ -27,7 +27,14 @@ import { mkdtemp, rm } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { ElectronCdpAutomationBridge } from './cdp-bridge.js'
+import { installApplicationMenu } from './app-menu.js'
 import { BrowserWindowManager, normalizeNavigationInput } from './window-manager.js'
+
+// Allow web notification / alert sounds without requiring a prior gesture inside each tab
+app.commandLine.appendSwitch('autoplay-policy', 'no-user-gesture-required')
+if (process.platform === 'win32') {
+  app.setAppUserModelId('com.eastandweast.mulspace')
+}
 
 let currentSettings: AppSettings = createDefaultAppSettings()
 let maintenanceTimer: ReturnType<typeof setInterval> | null = null
@@ -176,6 +183,7 @@ async function bootstrap(): Promise<void> {
     windowManager,
   })
 
+  installApplicationMenu(windowManager)
   await windowManager.createBrowserWindow()
 
   maintenanceTimer = setInterval(() => {
@@ -301,9 +309,42 @@ function registerIpcHandlers(deps: {
     windowManager.goForward(tabId)
   })
 
-  ipcMain.handle(IPC_CHANNELS.TAB_RELOAD, (_event, _workspaceId: WorkspaceId, tabId: TabId) => {
-    windowManager.reload(tabId)
-  })
+  ipcMain.handle(
+    IPC_CHANNELS.TAB_RELOAD,
+    (_event, _workspaceId: WorkspaceId, tabId: TabId, ignoreCache?: boolean) => {
+      windowManager.reload(tabId, Boolean(ignoreCache))
+    },
+  )
+
+  ipcMain.handle(
+    IPC_CHANNELS.TAB_CLEAR_CACHE_AND_RELOAD,
+    async (_event, workspaceId: WorkspaceId, tabId: TabId) => {
+      await windowManager.clearCacheAndReload(workspaceId, tabId)
+    },
+  )
+
+  ipcMain.handle(
+    IPC_CHANNELS.TAB_TOGGLE_MUTE,
+    async (_event, workspaceId: WorkspaceId, tabId: TabId) => {
+      await windowManager.toggleMute(workspaceId, tabId)
+    },
+  )
+
+  ipcMain.handle(
+    IPC_CHANNELS.TAB_SHOW_CONTEXT_MENU,
+    (event, workspaceId: WorkspaceId, tabId: TabId) => {
+      const winId = windowManager.resolveWindowIdFromSender(event.sender.id)
+      windowManager.showTabContextMenu(winId, workspaceId, tabId)
+    },
+  )
+
+  ipcMain.handle(
+    IPC_CHANNELS.TOOLBAR_SHOW_RELOAD_MENU,
+    (event, workspaceId: WorkspaceId, tabId: TabId) => {
+      const winId = windowManager.resolveWindowIdFromSender(event.sender.id)
+      windowManager.showReloadMenu(winId, workspaceId, tabId)
+    },
+  )
 
   ipcMain.handle(IPC_CHANNELS.TAB_PIN, async (_event, workspaceId: WorkspaceId, tabId: TabId) => {
     const tab = tabLifecycle.getTab(workspaceId, tabId)

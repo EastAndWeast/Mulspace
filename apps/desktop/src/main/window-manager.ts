@@ -19,10 +19,27 @@ import type { ITabViewAdapter, TabLifecycleManager } from '@wb/tab-lifecycle'
 import { defaultThemeRegistry } from '@wb/themes'
 import type { UpdateService } from '@wb/updater'
 import type { WorkspaceService } from '@wb/workspace-core'
-import { BaseWindow, WebContentsView, session, type WebContents } from 'electron'
+import { BaseWindow, Menu, WebContentsView, clipboard, session, type WebContents } from 'electron'
 import { randomUUID } from 'node:crypto'
 import { join } from 'node:path'
+import {
+  buildChromeContextMenuTemplate,
+  buildPageContextMenuTemplate,
+  buildReloadMenuTemplate,
+  buildTabContextMenuTemplate,
+} from './context-menu.js'
 import { buildLoadErrorHtml } from './error-page.js'
+
+const ALLOWED_SESSION_PERMISSIONS = new Set<string>([
+  'notifications',
+  'media',
+  'audioCapture',
+  'speaker-selection',
+  'clipboard-read',
+  'clipboard-sanitized-write',
+  'fullscreen',
+  'pointerLock',
+])
 
 interface ManagedWindow {
   id: WindowId
@@ -57,7 +74,7 @@ export class BrowserWindowManager
   private readonly tabIdToWorkspaceId = new Map<TabId, WorkspaceId>()
   private readonly proxyAuthByPartition = new Map<string, { username: string; password: string }>()
   private readonly allowedInsecureCertHosts = new Map<WorkspaceId, Set<string>>()
-  private readonly configuredCertPartitions = new Set<string>()
+  private readonly configuredSessionPartitions = new Set<string>()
   private readonly pendingCertErrors = new Map<
     TabId,
     { hostname: string; url: string; error: string; subject?: string; issuer?: string; token: string }
@@ -233,6 +250,38 @@ export class BrowserWindowManager
     this.windows.set(windowId, managed)
     this.chromeWebContentsToWindowId.set(chromeView.webContents.id, windowId)
 
+    chromeView.webContents.on('context-menu', (_event, params) => {
+      const items = buildChromeContextMenuTemplate(
+        {
+          isEditable: params.isEditable,
+          selectionText: params.selectionText,
+          editFlags: params.editFlags,
+        },
+        {
+          undo: () => chromeView.webContents.undo(),
+          redo: () => chromeView.webContents.redo(),
+          cut: () => chromeView.webContents.cut(),
+          copy: () => chromeView.webContents.copy(),
+          paste: () => chromeView.webContents.paste(),
+          selectAll: () => chromeView.webContents.selectAll(),
+        },
+      )
+      if (items.length > 0 && !baseWindow.isDestroyed()) {
+        Menu.buildFromTemplate(items).popup({ window: baseWindow })
+      }
+    })
+
+    chromeView.webContents.on('before-input-event', (event, input) => {
+      if (input.type !== 'keyDown') return
+      if (input.key === 'F5') {
+        event.preventDefault()
+        this.reloadFocusedTab(Boolean(input.control || input.shift || input.meta))
+      } else if (input.key === 'F12') {
+        event.preventDefault()
+        this.openDevToolsFocusedTab()
+      }
+    })
+
     const syncChromeSize = (): void => {
       const [w, h] = baseWindow.getContentSize()
       chromeView.setBounds({ x: 0, y: 0, width: w ?? 1380, height: h ?? 880 })
@@ -376,7 +425,7 @@ export class BrowserWindowManager
     if (this.tabViews.has(tab.id)) return
 
     const ses = session.fromPartition(workspace.partition, { cache: true })
-    this.ensureSessionCertVerifier(workspace.id, workspace.partition, ses)
+    this.ensureSessionPolicies(workspace.id, workspace.partition, ses)
     if (workspace.isolation.userAgent) {
       ses.setUserAgent(workspace.isolation.userAgent)
     }
@@ -391,6 +440,7 @@ export class BrowserWindowManager
     })
 
     view.webContents.setWebRTCIPHandlingPolicy(workspace.isolation.webrtcPolicy)
+    view.webContents.setAudioMuted(Boolean(tab.muted))
     if (workspace.isolation.userAgent) {
       view.webContents.setUserAgent(workspace.isolation.userAgent)
     }
@@ -457,13 +507,14 @@ export class BrowserWindowManager
     this.pendingCertErrors.delete(tabId)
   }
 
-  private ensureSessionCertVerifier(
+  private ensureSessionPolicies(
     workspaceId: WorkspaceId,
     partition: string,
     ses: Electron.Session,
   ): void {
-    if (this.configuredCertPartitions.has(partition)) return
-    this.configuredCertPartitions.add(partition)
+    if (this.configuredSessionPartitions.has(partition)) return
+    this.configuredSessionPartitions.add(partition)
+
     ses.setCertificateVerifyProc((request, callback) => {
       const allowed = this.allowedInsecureCertHosts.get(workspaceId)
       if (allowed && allowed.has(request.hostname.toLowerCase())) {
@@ -471,6 +522,13 @@ export class BrowserWindowManager
         return
       }
       callback(-3)
+    })
+
+    ses.setPermissionCheckHandler((_webContents, permission) =>
+      ALLOWED_SESSION_PERMISSIONS.has(permission),
+    )
+    ses.setPermissionRequestHandler((_webContents, permission, callback) => {
+      callback(ALLOWED_SESSION_PERMISSIONS.has(permission))
     })
   }
 
@@ -522,11 +580,160 @@ export class BrowserWindowManager
     }
   }
 
-  reload(tabId: TabId): void {
+  reload(tabId: TabId, ignoreCache = false): void {
     const view = this.tabViews.get(tabId)
     if (view && !view.webContents.isDestroyed()) {
-      view.webContents.reload()
+      if (ignoreCache) {
+        view.webContents.reloadIgnoringCache()
+      } else {
+        view.webContents.reload()
+      }
     }
+  }
+
+  async clearCacheAndReload(workspaceId: WorkspaceId, tabId: TabId): Promise<void> {
+    const ws = this.workspaceService.get(workspaceId)
+    if (ws) {
+      await session.fromPartition(ws.partition, { cache: true }).clearCache()
+    }
+    this.reload(tabId, true)
+  }
+
+  async toggleMute(workspaceId: WorkspaceId, tabId: TabId): Promise<void> {
+    const tab = this.tabLifecycle.getTab(workspaceId, tabId)
+    if (!tab) return
+    const nextMuted = !tab.muted
+    const view = this.tabViews.get(tabId)
+    if (view && !view.webContents.isDestroyed()) {
+      view.webContents.setAudioMuted(nextMuted)
+    }
+    await this.tabLifecycle.updateTabMeta(workspaceId, tabId, { muted: nextMuted })
+  }
+
+  showTabContextMenu(windowId: WindowId, workspaceId: WorkspaceId, tabId: TabId): void {
+    const win = this.windows.get(windowId)
+    const tab = this.tabLifecycle.getTab(workspaceId, tabId)
+    if (!win || win.baseWindow.isDestroyed() || !tab) return
+    const tabs = this.tabLifecycle.getTabs(workspaceId)
+    const items = buildTabContextMenuTemplate(
+      {
+        pinned: tab.pinned,
+        muted: tab.muted,
+        canClose: tabs.length > 1,
+      },
+      {
+        reload: () => this.reload(tabId, false),
+        hardReload: () => this.reload(tabId, true),
+        clearCacheAndReload: () => void this.clearCacheAndReload(workspaceId, tabId),
+        duplicate: () =>
+          void this.tabLifecycle.createTab({ workspaceId, url: tab.url, activate: true }, windowId),
+        togglePin: () =>
+          void this.tabLifecycle.updateTabMeta(workspaceId, tabId, { pinned: !tab.pinned }),
+        toggleMute: () => void this.toggleMute(workspaceId, tabId),
+        openDevTools: () => this.openDevTools(tabId),
+        close: () => {
+          void this.tabLifecycle.closeTab(workspaceId, tabId, windowId).then((next) => {
+            if (!next) {
+              return this.tabLifecycle.createTab({ workspaceId, activate: true }, windowId)
+            }
+            return undefined
+          })
+        },
+      },
+    )
+    Menu.buildFromTemplate(items).popup({ window: win.baseWindow })
+  }
+
+  showReloadMenu(windowId: WindowId, workspaceId: WorkspaceId, tabId: TabId): void {
+    const win = this.windows.get(windowId)
+    if (!win || win.baseWindow.isDestroyed()) return
+    const items = buildReloadMenuTemplate({
+      reload: () => this.reload(tabId, false),
+      hardReload: () => this.reload(tabId, true),
+      clearCacheAndReload: () => void this.clearCacheAndReload(workspaceId, tabId),
+    })
+    Menu.buildFromTemplate(items).popup({ window: win.baseWindow })
+  }
+
+  private getFocusedManagedWindow(): ManagedWindow | undefined {
+    return (
+      [...this.windows.values()].find((w) => !w.baseWindow.isDestroyed() && w.baseWindow.isFocused()) ??
+      this.windows.values().next().value
+    )
+  }
+
+  private getFocusedContext(): { win: ManagedWindow; workspaceId: WorkspaceId; tab: Tab | undefined } | null {
+    const win = this.getFocusedManagedWindow()
+    if (!win || win.baseWindow.isDestroyed()) return null
+    const workspaceId = this.workspaceService.getActiveWorkspaceForWindow(win.id)
+    const activeTabId = this.tabLifecycle.getActiveTabId(workspaceId)
+    const tab = activeTabId ? this.tabLifecycle.getTab(workspaceId, activeTabId) : undefined
+    return { win, workspaceId, tab }
+  }
+
+  async createTabInFocusedWindow(): Promise<void> {
+    const ctx = this.getFocusedContext()
+    if (!ctx) return
+    await this.tabLifecycle.createTab({ workspaceId: ctx.workspaceId, activate: true }, ctx.win.id)
+  }
+
+  async closeFocusedTab(): Promise<void> {
+    const ctx = this.getFocusedContext()
+    if (!ctx?.tab) return
+    const next = await this.tabLifecycle.closeTab(ctx.workspaceId, ctx.tab.id, ctx.win.id)
+    if (!next) {
+      await this.tabLifecycle.createTab({ workspaceId: ctx.workspaceId, activate: true }, ctx.win.id)
+    }
+  }
+
+  reloadFocusedTab(ignoreCache = false): void {
+    const ctx = this.getFocusedContext()
+    if (ctx?.tab) this.reload(ctx.tab.id, ignoreCache)
+  }
+
+  async clearCacheAndReloadFocusedTab(): Promise<void> {
+    const ctx = this.getFocusedContext()
+    if (ctx?.tab) await this.clearCacheAndReload(ctx.workspaceId, ctx.tab.id)
+  }
+
+  goBackFocusedTab(): void {
+    const ctx = this.getFocusedContext()
+    if (ctx?.tab) this.goBack(ctx.tab.id)
+  }
+
+  goForwardFocusedTab(): void {
+    const ctx = this.getFocusedContext()
+    if (ctx?.tab) this.goForward(ctx.tab.id)
+  }
+
+  openDevToolsFocusedTab(): void {
+    const ctx = this.getFocusedContext()
+    if (ctx?.tab) this.openDevTools(ctx.tab.id)
+  }
+
+  async toggleMuteFocusedTab(): Promise<void> {
+    const ctx = this.getFocusedContext()
+    if (ctx?.tab) await this.toggleMute(ctx.workspaceId, ctx.tab.id)
+  }
+
+  adjustZoomFocusedTab(mode: 'reset' | 'in' | 'out'): void {
+    const ctx = this.getFocusedContext()
+    if (!ctx?.tab) return
+    const view = this.tabViews.get(ctx.tab.id)
+    if (!view || view.webContents.isDestroyed()) return
+    if (mode === 'reset') {
+      view.webContents.setZoomLevel(0)
+      return
+    }
+    const cur = view.webContents.getZoomLevel()
+    view.webContents.setZoomLevel(mode === 'in' ? Math.min(cur + 0.5, 5) : Math.max(cur - 0.5, -5))
+  }
+
+  focusFocusedOmnibox(): void {
+    const win = this.getFocusedManagedWindow()
+    if (!win || win.chromeView.webContents.isDestroyed()) return
+    win.chromeView.webContents.focus()
+    win.chromeView.webContents.send(IPC_CHANNELS.CHROME_FOCUS_OMNIBOX)
   }
 
   openDevTools(tabId: TabId): void {
@@ -691,6 +898,83 @@ export class BrowserWindowManager
     })
     wc.on('media-paused', () => {
       void this.tabLifecycle.updateTabMeta(workspaceId, tabId, { audible: false })
+    })
+    wc.on('audio-state-changed', (event) => {
+      void this.tabLifecycle.updateTabMeta(workspaceId, tabId, { audible: event.audible })
+    })
+
+    wc.on('before-input-event', (event, input) => {
+      if (input.type !== 'keyDown') return
+      if (input.key === 'F5') {
+        event.preventDefault()
+        this.reload(tabId, Boolean(input.control || input.shift || input.meta))
+      } else if (input.key === 'F12') {
+        event.preventDefault()
+        this.openDevTools(tabId)
+      }
+    })
+
+    wc.on('context-menu', (_event, params) => {
+      if (wc.isDestroyed()) return
+      const targetWin =
+        [...this.windows.values()].find((w) => w.attachedTabId === tabId) ??
+        this.windows.values().next().value
+      if (!targetWin || targetWin.baseWindow.isDestroyed()) return
+
+      const currentTab = this.tabLifecycle.getTab(workspaceId, tabId)
+      const pageUrl = wc.getURL()
+      const items = buildPageContextMenuTemplate(
+        {
+          canGoBack: wc.navigationHistory.canGoBack(),
+          canGoForward: wc.navigationHistory.canGoForward(),
+          pageUrl,
+          linkURL: params.linkURL,
+          srcURL: params.srcURL,
+          mediaType: params.mediaType,
+          selectionText: params.selectionText,
+          isEditable: params.isEditable,
+          muted: Boolean(currentTab?.muted),
+          editFlags: params.editFlags,
+        },
+        {
+          goBack: () => this.goBack(tabId),
+          goForward: () => this.goForward(tabId),
+          reload: () => this.reload(tabId, false),
+          hardReload: () => this.reload(tabId, true),
+          clearCacheAndReload: () => void this.clearCacheAndReload(workspaceId, tabId),
+          openLinkInNewTab: (url) =>
+            void this.tabLifecycle.createTab({ workspaceId, url, activate: true }, targetWin.id),
+          copyText: (text) => clipboard.writeText(text),
+          copyImageAt: () => wc.copyImageAt(params.x, params.y),
+          downloadUrl: (url) => wc.downloadURL(url),
+          searchSelection: (text) =>
+            void this.tabLifecycle.createTab(
+              {
+                workspaceId,
+                url: `https://www.bing.com/search?q=${encodeURIComponent(text)}`,
+                activate: true,
+              },
+              targetWin.id,
+            ),
+          undo: () => wc.undo(),
+          redo: () => wc.redo(),
+          cut: () => wc.cut(),
+          copy: () => wc.copy(),
+          paste: () => wc.paste(),
+          pasteAndMatchStyle: () => wc.pasteAndMatchStyle(),
+          deleteSelection: () => wc.delete(),
+          selectAll: () => wc.selectAll(),
+          toggleMute: () => void this.toggleMute(workspaceId, tabId),
+          print: () => wc.print(),
+          viewSource: (url) =>
+            void this.tabLifecycle.createTab(
+              { workspaceId, url: `view-source:${url}`, activate: true },
+              targetWin.id,
+            ),
+          inspectElement: () => wc.inspectElement(params.x, params.y),
+        },
+      )
+      Menu.buildFromTemplate(items).popup({ window: targetWin.baseWindow })
     })
   }
 }

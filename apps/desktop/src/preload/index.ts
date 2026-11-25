@@ -48,8 +48,21 @@ const api: BrowserApi = {
     ipcRenderer.invoke(IPC_CHANNELS.TAB_BACK, workspaceId, tabId),
   goForward: (workspaceId: WorkspaceId, tabId: TabId) =>
     ipcRenderer.invoke(IPC_CHANNELS.TAB_FORWARD, workspaceId, tabId),
-  reloadTab: (workspaceId: WorkspaceId, tabId: TabId) =>
-    ipcRenderer.invoke(IPC_CHANNELS.TAB_RELOAD, workspaceId, tabId),
+  reloadTab: (workspaceId: WorkspaceId, tabId: TabId, ignoreCache?: boolean) =>
+    ipcRenderer.invoke(IPC_CHANNELS.TAB_RELOAD, workspaceId, tabId, ignoreCache),
+  clearCacheAndReloadTab: (workspaceId: WorkspaceId, tabId: TabId) =>
+    ipcRenderer.invoke(IPC_CHANNELS.TAB_CLEAR_CACHE_AND_RELOAD, workspaceId, tabId),
+  toggleMuteTab: (workspaceId: WorkspaceId, tabId: TabId) =>
+    ipcRenderer.invoke(IPC_CHANNELS.TAB_TOGGLE_MUTE, workspaceId, tabId),
+  showTabContextMenu: (workspaceId: WorkspaceId, tabId: TabId) =>
+    ipcRenderer.invoke(IPC_CHANNELS.TAB_SHOW_CONTEXT_MENU, workspaceId, tabId),
+  showReloadMenu: (workspaceId: WorkspaceId, tabId: TabId) =>
+    ipcRenderer.invoke(IPC_CHANNELS.TOOLBAR_SHOW_RELOAD_MENU, workspaceId, tabId),
+  onFocusOmnibox: (listener: () => void) => {
+    const wrapped = (): void => listener()
+    ipcRenderer.on(IPC_CHANNELS.CHROME_FOCUS_OMNIBOX, wrapped)
+    return () => ipcRenderer.removeListener(IPC_CHANNELS.CHROME_FOCUS_OMNIBOX, wrapped)
+  },
   togglePinTab: (workspaceId: WorkspaceId, tabId: TabId) =>
     ipcRenderer.invoke(IPC_CHANNELS.TAB_PIN, workspaceId, tabId),
   discardTab: (workspaceId: WorkspaceId, tabId: TabId) =>

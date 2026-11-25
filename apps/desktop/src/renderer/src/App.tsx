@@ -26,6 +26,8 @@ import {
   Snowflake,
   Sparkles,
   Trash2,
+  Volume2,
+  VolumeX,
   X,
 } from 'lucide-react'
 import { AiHubDialog } from './components/AiHubDialog.js'
@@ -56,6 +58,13 @@ export function App() {
   useEffect(() => {
     void window.browserApi.getState().then(setSnapshot)
     return window.browserApi.onStateUpdated(setSnapshot)
+  }, [])
+
+  useEffect(() => {
+    return window.browserApi.onFocusOmnibox(() => {
+      omniboxRef.current?.focus()
+      omniboxRef.current?.select()
+    })
   }, [])
 
   const activeWorkspace = useMemo(() => {
@@ -260,9 +269,26 @@ export function App() {
                   aria-selected={isTabActive}
                   className={`wb-tab ${isTabActive ? 'wb-tab--active' : ''}`}
                   onClick={() => void window.browserApi.activateTab(activeWorkspace.id, tab.id)}
+                  onContextMenu={(e) => {
+                    e.preventDefault()
+                    void window.browserApi.showTabContextMenu(activeWorkspace.id, tab.id)
+                  }}
                 >
                   {tab.pinned ? <Pin size={12} /> : null}
                   {tab.aiBusy ? <Bot size={12} /> : null}
+                  {tab.muted || tab.audible ? (
+                    <button
+                      type="button"
+                      className="wb-tab__close"
+                      title={tab.muted ? '取消静音' : '静音此标签页'}
+                      onClick={(e) => {
+                        e.stopPropagation()
+                        void window.browserApi.toggleMuteTab(activeWorkspace.id, tab.id)
+                      }}
+                    >
+                      {tab.muted ? <VolumeX size={12} /> : <Volume2 size={12} />}
+                    </button>
+                  ) : null}
                   {tab.state === 'frozen' ? (
                     <span title="轻量冻结中（保留 DOM）">
                       <Snowflake size={12} />
@@ -319,11 +345,17 @@ export function App() {
               <ArrowRight size={16} />
             </IconButton>
             <IconButton
-              title="刷新"
+              title="刷新（Shift+点击 或 右键强制刷新）"
               disabled={!activeTab}
-              onClick={() =>
-                activeTab && void window.browserApi.reloadTab(activeWorkspace.id, activeTab.id)
+              onClick={(e) =>
+                activeTab && void window.browserApi.reloadTab(activeWorkspace.id, activeTab.id, e.shiftKey)
               }
+              onContextMenu={(e) => {
+                e.preventDefault()
+                if (activeTab) {
+                  void window.browserApi.showReloadMenu(activeWorkspace.id, activeTab.id)
+                }
+              }}
             >
               <RotateCw size={15} />
             </IconButton>

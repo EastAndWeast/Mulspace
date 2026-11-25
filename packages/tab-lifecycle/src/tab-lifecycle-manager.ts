@@ -28,7 +28,7 @@ export interface ITabViewAdapter {
   navigate?(tabId: TabId, url: string): Promise<void> | void
   goBack?(tabId: TabId): Promise<void> | void
   goForward?(tabId: TabId): Promise<void> | void
-  reload?(tabId: TabId): Promise<void> | void
+  reload?(tabId: TabId, ignoreCache?: boolean): Promise<void> | void
   openDevTools?(tabId: TabId): Promise<void> | void
 }
 
