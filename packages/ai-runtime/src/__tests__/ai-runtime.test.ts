@@ -207,6 +207,56 @@ scope: ws_1
     const deniedJson = (await deniedRes.json()) as { error?: { message: string } }
     expect(deniedJson.error?.message).toContain('未授权')
 
+    // Disallowed URL schemes (file://, javascript:, view-source:) are blocked in MCP navigate
+    const guard = new WorkspaceBoundaryGuard()
+    expect(() => guard.assertSafeNavigationUrl('file:///etc/passwd')).toThrow(/安全护栏拦截/)
+    expect(() => guard.assertSafeNavigationUrl('javascript:alert(1)')).toThrow(/安全护栏拦截/)
+    expect(() => guard.assertSafeNavigationUrl('view-source:https://example.com')).toThrow(/安全护栏拦截/)
+    expect(guard.assertSafeNavigationUrl('https://example.com/ok')).toBe('https://example.com/ok')
+
+    const fileNavRes = await fetch(status.endpointUrl!, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        Authorization: 'Bearer secret-token-123',
+      },
+      body: JSON.stringify({
+        jsonrpc: '2.0',
+        id: 5,
+        method: 'tools/call',
+        params: {
+          name: 'navigate',
+          arguments: { workspaceId: 'ws_a', url: 'file:///tmp/browser-state.json' },
+        },
+      }),
+    })
+    const fileNavJson = (await fileNavRes.json()) as { error?: { message: string } }
+    expect(fileNavJson.error?.message).toContain('安全护栏拦截')
+
+    // JSON-RPC `null` body returns 400 Invalid Request promptly instead of hanging
+    const nullRes = await fetch(status.endpointUrl!, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        Authorization: 'Bearer secret-token-123',
+      },
+      body: 'null',
+    })
+    expect(nullRes.status).toBe(400)
+    const nullJson = (await nullRes.json()) as { error?: { code: number } }
+    expect(nullJson.error?.code).toBe(-32600)
+
+    // Unknown POST path returns 404
+    const badPathRes = await fetch(status.endpointUrl!.replace(/\/mcp$/, '/wrong'), {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        Authorization: 'Bearer secret-token-123',
+      },
+      body: JSON.stringify({ jsonrpc: '2.0', id: 6, method: 'ping' }),
+    })
+    expect(badPathRes.status).toBe(404)
+
     await server.stop()
   })
 

@@ -459,7 +459,8 @@ export class AgentService implements IKernelModule, IAgentRuntime {
       return JSON.stringify(snap)
     }
     if (name === 'navigate') {
-      return this.options.bridge.navigate(tabId, String(args.url ?? ''))
+      const safeUrl = this.guard.assertSafeNavigationUrl(String(args.url ?? ''))
+      return this.options.bridge.navigate(tabId, safeUrl)
     }
     if (name === 'click_element') {
       return this.options.bridge.clickRef(tabId, String(args.ref ?? ''))

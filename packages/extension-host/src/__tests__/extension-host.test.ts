@@ -64,6 +64,9 @@ describe('extension-host', () => {
       manifestVersion: 3,
       popupPath: 'popup.html',
     })
+    await expect(readExtensionManifest(join(dir, 'nonexistent-ext-dir'))).rejects.toThrow(
+      '安装包内缺少 manifest.json',
+    )
     expect(await readFile(join(dir, 'popup.html'), 'utf8')).toBe('<h1>Popup</h1>')
   })
 

@@ -10,7 +10,7 @@ import type { WindowId, Workspace, WorkspaceId, WorkspaceProxyBinding } from './
 export interface KernelEventMap {
   'workspace:created': { workspace: Workspace }
   'workspace:updated': { workspace: Workspace }
-  'workspace:deleted': { workspaceId: WorkspaceId }
+  'workspace:deleted': { workspaceId: WorkspaceId; partition?: string }
   'workspace:switched': { windowId: WindowId; workspaceId: WorkspaceId }
   'tab:created': { tab: Tab }
   'tab:updated': { tab: Tab }

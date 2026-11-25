@@ -1,5 +1,5 @@
 import { randomUUID } from 'node:crypto'
-import { mkdir, readFile, rename, writeFile } from 'node:fs/promises'
+import { chmod, mkdir, readFile, rename, writeFile } from 'node:fs/promises'
 import { dirname, join } from 'node:path'
 import type {
   AppSettings,
@@ -159,13 +159,85 @@ function createInitialSeedState(now = Date.now()): PersistedBrowserState {
   }
 }
 
+const ENC_PREFIX = 'enc:v1:'
+
+export interface StorageSecretCipher {
+  encrypt(plain: string): string
+  decrypt(ciphertext: string): string
+}
+
 export class JsonStorageRepository implements IStorageRepository {
   private readonly filePath: string
   private state: PersistedBrowserState | null = null
   private writeChain: Promise<void> = Promise.resolve()
 
-  constructor(dataDir: string, fileName = 'browser-state.json') {
+  constructor(
+    dataDir: string,
+    fileName = 'browser-state.json',
+    private readonly cipher?: StorageSecretCipher,
+  ) {
     this.filePath = join(dataDir, fileName)
+  }
+
+  private encryptSecret(plain: string): string {
+    if (!this.cipher || !plain || plain.startsWith(ENC_PREFIX)) return plain
+    try {
+      return `${ENC_PREFIX}${this.cipher.encrypt(plain)}`
+    } catch {
+      return plain
+    }
+  }
+
+  private decryptSecret(value: string): string {
+    if (!this.cipher || !value.startsWith(ENC_PREFIX)) return value
+    try {
+      return this.cipher.decrypt(value.slice(ENC_PREFIX.length))
+    } catch {
+      return value
+    }
+  }
+
+  private transformSecretsForDisk(state: PersistedBrowserState): PersistedBrowserState {
+    const copy = structuredClone(state)
+    copy.workspaces = copy.workspaces.map((ws) => {
+      if (ws.proxy?.customUrl && ws.proxy.customUrl.includes('@')) {
+        return {
+          ...ws,
+          proxy: { ...ws.proxy, customUrl: this.encryptSecret(ws.proxy.customUrl) },
+        }
+      }
+      return ws
+    })
+    if (copy.settings?.mcpHost?.authToken) {
+      copy.settings.mcpHost.authToken = this.encryptSecret(copy.settings.mcpHost.authToken)
+    }
+    if (Array.isArray(copy.settings?.llmProviders)) {
+      copy.settings.llmProviders = copy.settings.llmProviders.map((p) =>
+        p.apiKey ? { ...p, apiKey: this.encryptSecret(p.apiKey) } : p,
+      )
+    }
+    return copy
+  }
+
+  private decryptSecretsFromDisk(state: PersistedBrowserState): PersistedBrowserState {
+    state.workspaces = state.workspaces.map((ws) => {
+      if (ws.proxy?.customUrl?.startsWith(ENC_PREFIX)) {
+        return {
+          ...ws,
+          proxy: { ...ws.proxy, customUrl: this.decryptSecret(ws.proxy.customUrl) },
+        }
+      }
+      return ws
+    })
+    if (state.settings?.mcpHost?.authToken?.startsWith(ENC_PREFIX)) {
+      state.settings.mcpHost.authToken = this.decryptSecret(state.settings.mcpHost.authToken)
+    }
+    if (Array.isArray(state.settings?.llmProviders)) {
+      state.settings.llmProviders = state.settings.llmProviders.map((p) =>
+        p.apiKey?.startsWith(ENC_PREFIX) ? { ...p, apiKey: this.decryptSecret(p.apiKey) } : p,
+      )
+    }
+    return state
   }
 
   async loadState(): Promise<PersistedBrowserState> {
@@ -178,7 +250,7 @@ export class JsonStorageRepository implements IStorageRepository {
       const parsed = JSON.parse(raw) as Partial<PersistedBrowserState>
       if (parsed && parsed.schemaVersion === 1 && Array.isArray(parsed.workspaces) && parsed.workspaces.length > 0) {
         const defaults = createDefaultAppSettings()
-        this.state = {
+        this.state = this.decryptSecretsFromDisk({
           schemaVersion: 1,
           workspaces: parsed.workspaces,
           tabsByWorkspace: parsed.tabsByWorkspace ?? {},
@@ -201,7 +273,7 @@ export class JsonStorageRepository implements IStorageRepository {
           mcpServers: parsed.mcpServers ?? [],
           extensions: parsed.extensions ?? [],
           customThemes: parsed.customThemes ?? [],
-        }
+        })
         return structuredClone(this.state)
       }
     } catch {
@@ -297,11 +369,13 @@ export class JsonStorageRepository implements IStorageRepository {
   }
 
   private flush(snapshotSource: PersistedBrowserState): Promise<void> {
-    const payload = JSON.stringify(snapshotSource, null, 2)
+    const diskState = this.transformSecretsForDisk(snapshotSource)
+    const payload = JSON.stringify(diskState, null, 2)
     this.writeChain = this.writeChain.then(async () => {
-      await mkdir(dirname(this.filePath), { recursive: true })
+      await mkdir(dirname(this.filePath), { recursive: true, mode: 0o700 })
       const tmpPath = `${this.filePath}.${process.pid}.${Date.now()}.tmp`
-      await writeFile(tmpPath, payload, 'utf8')
+      await writeFile(tmpPath, payload, { encoding: 'utf8', mode: 0o600 })
+      await chmod(tmpPath, 0o600).catch(() => undefined)
       await rename(tmpPath, this.filePath)
     })
     return this.writeChain

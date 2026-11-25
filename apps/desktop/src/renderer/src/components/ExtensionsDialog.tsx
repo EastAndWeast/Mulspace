@@ -1,6 +1,7 @@
 import { useState } from 'react'
 import type { InstalledExtension, Workspace } from '@wb/contracts'
 import { Badge, Button, Dialog } from '@wb/ui-kit'
+import { formatIpcError } from '../utils/format-error.js'
 
 export interface ExtensionsDialogProps {
   open: boolean
@@ -40,7 +41,7 @@ export function ExtensionsDialog({
     try {
       await fn()
     } catch (err) {
-      setError(err instanceof Error ? err.message : String(err))
+      setError(formatIpcError(err))
     } finally {
       setBusy(false)
     }

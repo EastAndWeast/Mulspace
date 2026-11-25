@@ -13,8 +13,17 @@ export interface ParsedCustomProxyUrl {
   password?: string
 }
 
-function makeNodeId(name: string, server: string, port: number, index: number): string {
-  const digest = createHash('sha1').update(`${name}|${server}|${port}|${index}`).digest('hex').slice(0, 10)
+function makeNodeId(
+  name: string,
+  server: string,
+  port: number,
+  index: number,
+  subscriptionId?: string,
+): string {
+  const digest = createHash('sha1')
+    .update(`${subscriptionId ?? ''}|${name}|${server}|${port}|${index}`)
+    .digest('hex')
+    .slice(0, 10)
   return `node_${digest}`
 }
 
@@ -75,7 +84,7 @@ function parseSingleUri(uri: string, index: number, subscriptionId?: string): Pr
         }
       }
       return {
-        id: makeNodeId(name, server, port, index),
+        id: makeNodeId(name, server, port, index, subscriptionId),
         name,
         protocol: 'vmess',
         server,
@@ -117,7 +126,7 @@ function parseSingleUri(uri: string, index: number, subscriptionId?: string): Pr
     if (!server || !method || !Number.isFinite(port)) return null
     const name = fragmentName || `ss-${server}:${port}`
     return {
-      id: makeNodeId(name, server, port, index),
+      id: makeNodeId(name, server, port, index, subscriptionId),
       name,
       protocol: 'ss',
       server,
@@ -165,7 +174,7 @@ function parseSingleUri(uri: string, index: number, subscriptionId?: string): Pr
       rawConfig.password = decodeURIComponent(parsedUrl.password)
     }
     return {
-      id: makeNodeId(name, server, port, index),
+      id: makeNodeId(name, server, port, index, subscriptionId),
       name,
       protocol,
       server,
@@ -182,7 +191,7 @@ function parseSingleUri(uri: string, index: number, subscriptionId?: string): Pr
     if (!server || !Number.isFinite(port)) return null
     const name = fragmentName || `${protocol}-${server}:${port}`
     return {
-      id: makeNodeId(name, server, port, index),
+      id: makeNodeId(name, server, port, index, subscriptionId),
       name,
       protocol,
       server,
@@ -232,7 +241,12 @@ export function parseProxyImport(content: string, subscriptionId?: string): Pars
 
   // 1. Try Clash YAML when proxies: exists
   if (/^\s*proxies\s*:/m.test(trimmed)) {
-    const doc = parseYaml(trimmed) as { proxies?: unknown } | null
+    let doc: { proxies?: unknown } | null = null
+    try {
+      doc = parseYaml(trimmed) as { proxies?: unknown } | null
+    } catch {
+      throw new Error('Clash YAML 语法格式无效，请检查缩进与字段后重试')
+    }
     if (doc && Array.isArray(doc.proxies)) {
       const nodes: ProxyNode[] = []
       const usedNames = new Set<string>()
@@ -250,7 +264,7 @@ export function parseProxyImport(content: string, subscriptionId?: string): Pars
         }
         usedNames.add(name)
         nodes.push({
-          id: makeNodeId(name, server, port, idx),
+          id: makeNodeId(name, server, port, idx, subscriptionId),
           name,
           protocol,
           server,

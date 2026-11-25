@@ -95,6 +95,12 @@ export function WorkspaceEditorDialog({
             >
               删除工作区
             </Button>
+          ) : workspace ? (
+            <span
+              style={{ fontSize: 11, color: 'var(--wb-sys-color-on-surface-variant)', marginRight: 'auto' }}
+            >
+              至少需保留 1 个工作区
+            </span>
           ) : null}
           <Button variant="text" onClick={onClose}>
             取消

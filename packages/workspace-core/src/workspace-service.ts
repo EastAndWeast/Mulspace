@@ -187,10 +187,10 @@ export class WorkspaceService implements IKernelModule {
 
   async delete(workspaceId: WorkspaceId): Promise<void> {
     if (this.workspaces.length <= 1) {
-      throw new Error('Cannot delete the last remaining workspace')
+      throw new Error('至少需要保留一个工作区，无法删除最后一个工作区')
     }
-    const exists = this.workspaces.some((w) => w.id === workspaceId)
-    if (!exists) {
+    const target = this.workspaces.find((w) => w.id === workspaceId)
+    if (!target) {
       throw new Error(`Workspace not found: ${workspaceId}`)
     }
 
@@ -208,6 +208,6 @@ export class WorkspaceService implements IKernelModule {
     }
 
     await this.storage.deleteWorkspace(workspaceId)
-    this.ctx.events.emit('workspace:deleted', { workspaceId })
+    this.ctx.events.emit('workspace:deleted', { workspaceId, partition: target.partition })
   }
 }

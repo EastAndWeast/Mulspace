@@ -84,12 +84,13 @@ export function App() {
   const activeTab: Tab | null = useMemo(() => {
     if (!activeWorkspace || workspaceTabs.length === 0) return null
     return (
+      (snapshot?.activeTabId ? workspaceTabs.find((t) => t.id === snapshot.activeTabId) : undefined) ??
       workspaceTabs.find((t) => t.state === 'active') ??
       workspaceTabs.find((t) => t.id === activeWorkspace.activeTabId) ??
       workspaceTabs[0] ??
       null
     )
-  }, [activeWorkspace, workspaceTabs])
+  }, [activeWorkspace, workspaceTabs, snapshot?.activeTabId])
 
   useEffect(() => {
     if (activeTab && document.activeElement !== omniboxRef.current) {
@@ -182,6 +183,7 @@ export function App() {
     <ThemeProvider
       themeId={snapshot.settings.themeId}
       mode={snapshot.settings.themeMode}
+      themes={snapshot.themes}
       seedColorOverride={dynamicSeed}
     >
       <div className="wb-shell">

@@ -12,6 +12,32 @@ export const OFFICIAL_THEMES: ThemeManifest[] = [
   obsidianProTheme,
 ]
 
+function sanitizeSchemeOverrides(raw: unknown): Record<string, string> | undefined {
+  if (!raw || typeof raw !== 'object') return undefined
+  const out: Record<string, string> = {}
+  for (const [key, val] of Object.entries(raw as Record<string, unknown>)) {
+    if (!/^--wb-[a-z0-9-]+$/i.test(key)) continue
+    if (typeof val !== 'string') continue
+    const trimmed = val.trim()
+    if (!trimmed || trimmed.length > 120) continue
+    if (/[;{}]|url\s*\(|expression\s*\(/i.test(trimmed)) continue
+    out[key] = trimmed
+  }
+  return Object.keys(out).length > 0 ? out : undefined
+}
+
+function sanitizeTokenOverrides(raw: unknown): ThemeManifest['tokenOverrides'] {
+  if (!raw || typeof raw !== 'object') return undefined
+  const rec = raw as Record<string, unknown>
+  const light = sanitizeSchemeOverrides(rec.light)
+  const dark = sanitizeSchemeOverrides(rec.dark)
+  if (!light && !dark) return undefined
+  const out: NonNullable<ThemeManifest['tokenOverrides']> = {}
+  if (light) out.light = light as NonNullable<ThemeManifest['tokenOverrides']>['light']
+  if (dark) out.dark = dark as NonNullable<ThemeManifest['tokenOverrides']>['dark']
+  return out
+}
+
 export function validateThemeManifest(raw: unknown): ThemeManifest {
   if (!raw || typeof raw !== 'object') {
     throw new Error('主题 JSON 格式无效')
@@ -41,11 +67,21 @@ export function validateThemeManifest(raw: unknown): ThemeManifest {
     defaultSeedColor,
     density,
     supportsDynamicWorkspaceColor: obj.supportsDynamicWorkspaceColor !== false,
-    tokenOverrides:
-      obj.tokenOverrides && typeof obj.tokenOverrides === 'object'
-        ? (obj.tokenOverrides as ThemeManifest['tokenOverrides'])
-        : undefined,
+    tokenOverrides: sanitizeTokenOverrides(obj.tokenOverrides),
   }
+}
+
+export function resolveThemeTokensFromManifest(
+  manifest: ThemeManifest,
+  scheme: ResolvedThemeScheme,
+  seedColorOverride?: string,
+): ThemeTokens {
+  const effectiveSeed =
+    manifest.supportsDynamicWorkspaceColor && seedColorOverride
+      ? seedColorOverride
+      : manifest.defaultSeedColor
+  const sanitizedOverrides = sanitizeTokenOverrides(manifest.tokenOverrides)
+  return generateMd3Tokens(effectiveSeed, scheme, manifest.density, sanitizedOverrides)
 }
 
 export class ThemeRegistry {
@@ -73,8 +109,16 @@ export class ThemeRegistry {
   }
 
   importFromJson(jsonText: string): ThemeManifest {
-    const parsed = JSON.parse(jsonText) as unknown
+    let parsed: unknown
+    try {
+      parsed = JSON.parse(jsonText) as unknown
+    } catch {
+      throw new Error('主题 JSON 语法无效，请检查格式后重试')
+    }
     const manifest = validateThemeManifest(parsed)
+    if (OFFICIAL_THEMES.some((o) => o.id === manifest.id)) {
+      throw new Error(`不允许覆盖内置官方主题 "${manifest.id}"，请修改 id 后重新导入`)
+    }
     this.register(manifest)
     return manifest
   }
@@ -98,17 +142,20 @@ export class ThemeRegistry {
     return this.themes.get(themeId) ?? materialYouTheme
   }
 
+  resolveManifestTokens(
+    manifest: ThemeManifest,
+    scheme: ResolvedThemeScheme,
+    seedColorOverride?: string,
+  ): ThemeTokens {
+    return resolveThemeTokensFromManifest(manifest, scheme, seedColorOverride)
+  }
+
   resolveTokens(
     themeId: string,
     scheme: ResolvedThemeScheme,
     seedColorOverride?: string,
   ): ThemeTokens {
-    const manifest = this.get(themeId)
-    const effectiveSeed =
-      manifest.supportsDynamicWorkspaceColor && seedColorOverride
-        ? seedColorOverride
-        : manifest.defaultSeedColor
-    return generateMd3Tokens(effectiveSeed, scheme, manifest.density, manifest.tokenOverrides)
+    return resolveThemeTokensFromManifest(this.get(themeId), scheme, seedColorOverride)
   }
 
   tokensToCssText(tokens: ThemeTokens, selector = ':root'): string {

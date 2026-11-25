@@ -1,8 +1,8 @@
-import { mkdtemp, rm } from 'node:fs/promises'
+import { mkdtemp, readFile, rm, stat } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { afterEach, describe, expect, it } from 'vitest'
-import { JsonStorageRepository } from '../json-storage.js'
+import { JsonStorageRepository, type StorageSecretCipher } from '../json-storage.js'
 
 const tempDirs: string[] = []
 
@@ -63,5 +63,29 @@ describe('JsonStorageRepository', () => {
     const afterDelete = await new JsonStorageRepository(dir).loadState()
     expect(afterDelete.workspaces.map((w) => w.id)).not.toContain('ws_custom')
     expect(afterDelete.tabsByWorkspace['ws_custom']).toBeUndefined()
+  })
+
+  it('encrypts sensitive credentials on disk with 0600 permissions when cipher is provided', async () => {
+    const dir = await createTempDir()
+    const mockCipher: StorageSecretCipher = {
+      encrypt: (plain) => Buffer.from(plain, 'utf8').toString('base64'),
+      decrypt: (ct) => Buffer.from(ct, 'base64').toString('utf8'),
+    }
+    const repo = new JsonStorageRepository(dir, 'browser-state.json', mockCipher)
+    const state = await repo.loadState()
+    const ws = state.workspaces[0]!
+    await repo.saveWorkspace({
+      ...ws,
+      proxy: { mode: 'custom', customUrl: 'http://user_a:secret_pw@127.0.0.1:8888' },
+    })
+
+    const diskRaw = await readFile(join(dir, 'browser-state.json'), 'utf8')
+    expect(diskRaw).not.toContain('secret_pw')
+    expect(diskRaw).toContain('enc:v1:')
+    const st = await stat(join(dir, 'browser-state.json'))
+    expect(st.mode & 0o777).toBe(0o600)
+
+    const reloaded = await new JsonStorageRepository(dir, 'browser-state.json', mockCipher).loadState()
+    expect(reloaded.workspaces[0]?.proxy.customUrl).toBe('http://user_a:secret_pw@127.0.0.1:8888')
   })
 })

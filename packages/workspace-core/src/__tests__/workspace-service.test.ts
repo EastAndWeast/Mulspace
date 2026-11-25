@@ -46,7 +46,7 @@ describe('WorkspaceService', () => {
       await service.delete(ws.id)
     }
     expect(service.list()).toHaveLength(1)
-    await expect(service.delete(service.list()[0]!.id)).rejects.toThrow(/last remaining/i)
+    await expect(service.delete(service.list()[0]!.id)).rejects.toThrow(/至少需要保留一个工作区/)
   })
 
   it('tracks independent active workspaces per window', async () => {

@@ -17,12 +17,12 @@ import {
 import { ExtensionService } from '@wb/extension-host'
 import { BrowserKernel } from '@wb/kernel'
 import { ProxyService } from '@wb/proxy-engine'
-import { createDefaultAppSettings, JsonStorageRepository } from '@wb/storage'
+import { createDefaultAppSettings, JsonStorageRepository, type StorageSecretCipher } from '@wb/storage'
 import { TabLifecycleManager } from '@wb/tab-lifecycle'
 import { defaultThemeRegistry } from '@wb/themes'
 import { UpdateService } from '@wb/updater'
 import { WorkspaceService } from '@wb/workspace-core'
-import { app, dialog, ipcMain, shell } from 'electron'
+import { app, dialog, ipcMain, safeStorage, session, shell } from 'electron'
 import { mkdtemp, rm } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
@@ -40,11 +40,24 @@ let currentSettings: AppSettings = createDefaultAppSettings()
 let maintenanceTimer: ReturnType<typeof setInterval> | null = null
 
 async function bootstrap(): Promise<void> {
+  app.userAgentFallback = app.userAgentFallback
+    .replace(/\s*@wb\/desktop\/[^\s]+/g, '')
+    .replace(/\s*Electron\/[^\s]+/g, '')
+
   const isSmokeTest = process.env.WB_SMOKE_TEST === '1'
   const smokeDir = isSmokeTest ? await mkdtemp(join(tmpdir(), 'wb-smoke-')) : null
   const dataDir = smokeDir ?? join(app.getPath('userData'), 'wb-data')
 
-  const storage = new JsonStorageRepository(dataDir)
+  const storageCipher: StorageSecretCipher | undefined =
+    !isSmokeTest && safeStorage.isEncryptionAvailable()
+      ? {
+          encrypt: (plain: string) => safeStorage.encryptString(plain).toString('base64'),
+          decrypt: (ciphertext: string) =>
+            safeStorage.decryptString(Buffer.from(ciphertext, 'base64')),
+        }
+      : undefined
+
+  const storage = new JsonStorageRepository(dataDir, 'browser-state.json', storageCipher)
   const initialState = await storage.loadState()
   currentSettings = initialState.settings
   if (isSmokeTest) {
@@ -61,6 +74,12 @@ async function bootstrap(): Promise<void> {
     getWorkspace: (id) => workspaceService.get(id),
     getSettings: () => currentSettings,
     adapter: windowManager,
+    setWorkspaceActiveTab: async (wsId, tabId) => {
+      const ws = workspaceService.get(wsId)
+      if (ws && ws.activeTabId !== tabId) {
+        await workspaceService.update(wsId, { activeTabId: tabId })
+      }
+    },
   })
 
   const proxyService = new ProxyService(storage, {
@@ -127,17 +146,30 @@ async function bootstrap(): Promise<void> {
 
   await kernel.start()
 
-  // Inject proxy credentials per workspace partition when Electron challenges for proxy auth
+  // Inject proxy credentials per workspace partition when Electron challenges for proxy auth,
+  // but abort immediately if the same credentials are rejected twice in a short window.
+  const proxyAuthAttempts = new Map<string, { count: number; ts: number }>()
   app.on('login', (event, webContents, _details, authInfo, callback) => {
     if (!authInfo.isProxy) return
     const allWorkspaces = workspaceService.list()
     for (const ws of allWorkspaces) {
+      const ses = session.fromPartition(ws.partition, { cache: true })
+      if (webContents.session !== ses) continue
       const creds = windowManager.getProxyAuthForPartition(ws.partition)
-      if (creds && webContents.session.storagePath?.includes(ws.id)) {
+      if (!creds) return
+      const key = `${ws.partition}|${authInfo.host}|${authInfo.port}|${creds.username}|${creds.password}`
+      const now = Date.now()
+      const prev = proxyAuthAttempts.get(key)
+      const count = prev && now - prev.ts < 3000 ? prev.count + 1 : 1
+      proxyAuthAttempts.set(key, { count, ts: now })
+      if (count > 2) {
         event.preventDefault()
-        callback(creds.username, creds.password)
+        callback()
         return
       }
+      event.preventDefault()
+      callback(creds.username, creds.password)
+      return
     }
   })
 

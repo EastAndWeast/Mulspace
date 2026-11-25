@@ -65,6 +65,13 @@ proxies:
     expect(parsedV2.format).toBe('v2ray-base64')
     expect(parsedV2.nodes.map((n) => n.protocol)).toEqual(['vmess', 'trojan', 'ss', 'hysteria2'])
 
+    const dupA = parseProxyImport(clashYaml, 'sub_dup_1')
+    const dupB = parseProxyImport(clashYaml, 'sub_dup_2')
+    expect(dupA.nodes[0]?.id).not.toBe(dupB.nodes[0]?.id)
+    expect(() => parseProxyImport('proxies:\n  - name: "bad"\n\tbadIndent: true')).toThrow(
+      /Clash YAML 语法格式无效/,
+    )
+
     const custom = parseCustomProxyUrl('socks5://alice:p%40ss@127.0.0.1:10808')
     expect(custom).toEqual({
       proxyRules: 'socks5://127.0.0.1:10808',

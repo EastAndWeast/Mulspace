@@ -19,8 +19,18 @@ import type { ITabViewAdapter, TabLifecycleManager } from '@wb/tab-lifecycle'
 import { defaultThemeRegistry } from '@wb/themes'
 import type { UpdateService } from '@wb/updater'
 import type { WorkspaceService } from '@wb/workspace-core'
-import { BaseWindow, Menu, WebContentsView, clipboard, session, type WebContents } from 'electron'
+import {
+  app,
+  BaseWindow,
+  Menu,
+  WebContentsView,
+  clipboard,
+  dialog,
+  session,
+  type WebContents,
+} from 'electron'
 import { randomUUID } from 'node:crypto'
+import { rm } from 'node:fs/promises'
 import { join } from 'node:path'
 import {
   buildChromeContextMenuTemplate,
@@ -30,16 +40,27 @@ import {
 } from './context-menu.js'
 import { buildLoadErrorHtml } from './error-page.js'
 
-const ALLOWED_SESSION_PERMISSIONS = new Set<string>([
+const AUTO_ALLOWED_PERMISSIONS = new Set<string>([
+  'fullscreen',
+  'pointerLock',
+  'clipboard-sanitized-write',
+])
+
+const PROMPTABLE_PERMISSIONS = new Set<string>([
   'notifications',
   'media',
   'audioCapture',
-  'speaker-selection',
   'clipboard-read',
-  'clipboard-sanitized-write',
-  'fullscreen',
-  'pointerLock',
+  'geolocation',
 ])
+
+const PERMISSION_LABELS: Record<string, string> = {
+  notifications: '桌面通知',
+  media: '摄像头 / 麦克风',
+  audioCapture: '麦克风音频录制',
+  'clipboard-read': '读取剪贴板内容',
+  geolocation: '获取地理位置',
+}
 
 interface ManagedWindow {
   id: WindowId
@@ -48,6 +69,7 @@ interface ManagedWindow {
   viewportBounds: ViewportBounds
   attachedTabId: TabId | null
   overlayOpen: boolean
+  initialBoundsSynced: boolean
 }
 
 export function normalizeNavigationInput(raw: string): string {
@@ -79,6 +101,11 @@ export class BrowserWindowManager
     TabId,
     { hostname: string; url: string; error: string; subject?: string; issuer?: string; token: string }
   >()
+  private readonly pendingLoadUrls = new Map<TabId, string>()
+  private readonly failedTabUrls = new Map<TabId, string>()
+  private readonly grantedPermissions = new Map<WorkspaceId, Set<string>>()
+  private readonly deniedPermissions = new Map<WorkspaceId, Set<string>>()
+  private readonly pendingPermissionPrompts = new Map<string, Promise<boolean>>()
 
   private windowSeq = 0
   private aiMessageSeq = 0
@@ -114,9 +141,59 @@ export class BrowserWindowManager
     }
 
     this.kernel.events.on('workspace:created', broadcastAll)
-    this.kernel.events.on('workspace:updated', broadcastAll)
-    this.kernel.events.on('workspace:deleted', ({ workspaceId }) => {
+    this.kernel.events.on('workspace:updated', ({ workspace }) => {
+      const ses = session.fromPartition(workspace.partition, { cache: true })
+      const ua = workspace.isolation.userAgent?.trim() || this.getDefaultUserAgent()
+      ses.setUserAgent(ua)
+      for (const [tabId, wsId] of this.tabIdToWorkspaceId.entries()) {
+        if (wsId !== workspace.id) continue
+        const view = this.tabViews.get(tabId)
+        if (view && !view.webContents.isDestroyed()) {
+          view.webContents.setUserAgent(ua)
+          view.webContents.setWebRTCIPHandlingPolicy(workspace.isolation.webrtcPolicy)
+        }
+      }
+      broadcastAll()
+    })
+    this.kernel.events.on('workspace:deleted', ({ workspaceId, partition }) => {
       this.allowedInsecureCertHosts.delete(workspaceId)
+      this.grantedPermissions.delete(workspaceId)
+      this.deniedPermissions.delete(workspaceId)
+
+      const resolvedPartition = partition ?? `persist:ws-${workspaceId}`
+      this.proxyAuthByPartition.delete(resolvedPartition)
+      this.configuredSessionPartitions.delete(resolvedPartition)
+
+      // Detach any window that was displaying a view from the deleted workspace
+      for (const win of this.windows.values()) {
+        if (win.attachedTabId && this.tabIdToWorkspaceId.get(win.attachedTabId) === workspaceId) {
+          this.detachView(win.attachedTabId, win.id)
+          const fallbackWsId = this.workspaceService.getActiveWorkspaceForWindow(win.id)
+          void this.ensureActiveTabForWorkspace(fallbackWsId, win.id).then(() => {
+            this.pushSnapshotToWindow(win.id)
+          })
+        }
+      }
+
+      // Clean session storage and disk Partition directory after view teardown settles
+      const partDirName = resolvedPartition.replace(/^persist:/, '')
+      if (partDirName) {
+        const ses = session.fromPartition(resolvedPartition, { cache: true })
+        setTimeout(() => {
+          void Promise.allSettled([
+            ses.closeAllConnections(),
+            ses.clearStorageData(),
+            ses.clearCache(),
+            ses.clearAuthCache(),
+          ]).then(() =>
+            rm(join(app.getPath('userData'), 'Partitions', partDirName), {
+              recursive: true,
+              force: true,
+            }).catch(() => undefined),
+          )
+        }, 150)
+      }
+
       broadcastAll()
     })
     this.kernel.events.on('workspace:switched', ({ windowId }) => {
@@ -156,6 +233,9 @@ export class BrowserWindowManager
     } else {
       this.proxyAuthByPartition.delete(workspace.partition)
     }
+
+    await ses.clearAuthCache()
+    await ses.closeAllConnections()
 
     if (config.mode === 'direct') {
       await ses.setProxy({ mode: 'direct' })
@@ -237,14 +317,20 @@ export class BrowserWindowManager
     })
 
     baseWindow.contentView.addChildView(chromeView)
-
+    const [initW, initH] = baseWindow.getContentSize()
     const managed: ManagedWindow = {
       id: windowId,
       baseWindow,
       chromeView,
-      viewportBounds: { x: 64, y: 88, width: 1200, height: 740 },
+      viewportBounds: {
+        x: 64,
+        y: 88,
+        width: Math.max(300, (initW ?? 1380) - 64),
+        height: Math.max(200, (initH ?? 880) - 88),
+      },
       attachedTabId: null,
       overlayOpen: false,
+      initialBoundsSynced: false,
     }
 
     this.windows.set(windowId, managed)
@@ -302,10 +388,11 @@ export class BrowserWindowManager
       await chromeView.webContents.loadFile(join(__dirname, '../renderer/index.html'))
     }
 
+    // Show BaseWindow before creating/attaching workspace WebContentsView so macOS attaches an active, unthrottled surface
+    baseWindow.show()
     await this.workspaceService.bindWindowToWorkspace(windowId, workspaceId)
     await this.ensureActiveTabForWorkspace(workspaceId, windowId)
 
-    baseWindow.show()
     this.pushSnapshotToWindow(windowId)
     return windowId
   }
@@ -351,7 +438,15 @@ export class BrowserWindowManager
 
     if (win.attachedTabId && !win.overlayOpen) {
       const view = this.tabViews.get(win.attachedTabId)
-      view?.setBounds(win.viewportBounds)
+      if (view) {
+        view.setBounds(win.viewportBounds)
+        if (!win.initialBoundsSynced) {
+          win.initialBoundsSynced = true
+          view.setVisible(true)
+          view.webContents.setBackgroundThrottling(false)
+          view.webContents.invalidate()
+        }
+      }
     }
   }
 
@@ -371,16 +466,21 @@ export class BrowserWindowManager
         // Ignore
       }
     } else {
+      view.setVisible(true)
       win.baseWindow.contentView.addChildView(view)
       view.setBounds(win.viewportBounds)
+      view.webContents.setBackgroundThrottling(false)
+      view.webContents.invalidate()
     }
   }
 
   getSnapshot(windowId: WindowId): BrowserWindowSnapshot {
+    const win = this.windows.get(windowId)
     const activeWorkspaceId = this.workspaceService.getActiveWorkspaceForWindow(windowId)
     return {
       windowId,
       activeWorkspaceId,
+      activeTabId: win?.attachedTabId ?? this.tabLifecycle.getActiveTabId(activeWorkspaceId),
       workspaces: this.workspaceService.list(),
       tabsByWorkspace: this.tabLifecycle.getAllTabsByWorkspace(),
       settings: this.getSettings(),
@@ -421,14 +521,17 @@ export class BrowserWindowManager
 
   // ---- ITabViewAdapter Implementation ----
 
+  private getDefaultUserAgent(): string {
+    return app.userAgentFallback
+  }
+
   async createView(tab: Tab, workspace: Workspace): Promise<void> {
     if (this.tabViews.has(tab.id)) return
 
     const ses = session.fromPartition(workspace.partition, { cache: true })
     this.ensureSessionPolicies(workspace.id, workspace.partition, ses)
-    if (workspace.isolation.userAgent) {
-      ses.setUserAgent(workspace.isolation.userAgent)
-    }
+    const effectiveUa = workspace.isolation.userAgent?.trim() || this.getDefaultUserAgent()
+    ses.setUserAgent(effectiveUa)
 
     const view = new WebContentsView({
       webPreferences: {
@@ -436,23 +539,20 @@ export class BrowserWindowManager
         contextIsolation: true,
         nodeIntegration: false,
         sandbox: true,
+        backgroundThrottling: false,
       },
     })
 
     view.webContents.setWebRTCIPHandlingPolicy(workspace.isolation.webrtcPolicy)
     view.webContents.setAudioMuted(Boolean(tab.muted))
-    if (workspace.isolation.userAgent) {
-      view.webContents.setUserAgent(workspace.isolation.userAgent)
-    }
+    view.webContents.setUserAgent(effectiveUa)
 
     this.tabViews.set(tab.id, view)
     this.tabIdToWorkspaceId.set(tab.id, workspace.id)
     this.wireWebContentsEvents(tab.id, workspace.id, view)
 
     const targetUrl = tab.snapshot?.url ?? tab.url
-    void view.webContents.loadURL(normalizeNavigationInput(targetUrl)).catch(() => {
-      // Ignore ERR_ABORTED during rapid redirects/closes
-    })
+    this.pendingLoadUrls.set(tab.id, normalizeNavigationInput(targetUrl))
   }
 
   attachView(tabId: TabId, windowId: WindowId): void {
@@ -473,8 +573,19 @@ export class BrowserWindowManager
 
     win.attachedTabId = tabId
     if (!win.overlayOpen) {
+      view.setVisible(true)
       win.baseWindow.contentView.addChildView(view)
       view.setBounds(win.viewportBounds)
+      view.webContents.setBackgroundThrottling(false)
+      view.webContents.invalidate()
+    }
+
+    const pendingUrl = this.pendingLoadUrls.get(tabId)
+    if (pendingUrl) {
+      this.pendingLoadUrls.delete(tabId)
+      void view.webContents.loadURL(pendingUrl).catch(() => {
+        // Ignore ERR_ABORTED during rapid redirects/closes
+      })
     }
   }
 
@@ -505,6 +616,76 @@ export class BrowserWindowManager
     this.tabViews.delete(tabId)
     this.tabIdToWorkspaceId.delete(tabId)
     this.pendingCertErrors.delete(tabId)
+    this.pendingLoadUrls.delete(tabId)
+    this.failedTabUrls.delete(tabId)
+  }
+
+  private isPermissionGranted(workspaceId: WorkspaceId, origin: string, permission: string): boolean {
+    if (AUTO_ALLOWED_PERMISSIONS.has(permission)) return true
+    const key = `${origin}|${permission}`
+    return Boolean(this.grantedPermissions.get(workspaceId)?.has(key))
+  }
+
+  private async promptWorkspacePermission(
+    workspaceId: WorkspaceId,
+    origin: string,
+    permission: string,
+  ): Promise<boolean> {
+    const cacheKey = `${workspaceId}|${origin}|${permission}`
+    const existing = this.pendingPermissionPrompts.get(cacheKey)
+    if (existing) return existing
+
+    const task = (async () => {
+      const ws = this.workspaceService.get(workspaceId)
+      const label = PERMISSION_LABELS[permission] ?? permission
+      const host = (() => {
+        try {
+          return new URL(origin).host || origin
+        } catch {
+          return origin
+        }
+      })()
+      const win = this.getFocusedManagedWindow()?.baseWindow
+      const options = {
+        type: 'question' as const,
+        title: '网页权限请求',
+        message: `工作区「${ws?.name ?? workspaceId}」中的网站 ${host} 请求「${label}」权限`,
+        detail: '权限策略按工作区独立隔离，不会影响其他工作区。',
+        buttons: ['拒绝', '仅本次允许', '在本工作区允许'],
+        defaultId: 0,
+        cancelId: 0,
+      }
+      const res = win && !win.isDestroyed()
+        ? await dialog.showMessageBox(win, options)
+        : await dialog.showMessageBox(options)
+
+      const key = `${origin}|${permission}`
+      if (res.response === 2) {
+        let set = this.grantedPermissions.get(workspaceId)
+        if (!set) {
+          set = new Set<string>()
+          this.grantedPermissions.set(workspaceId, set)
+        }
+        set.add(key)
+        this.deniedPermissions.get(workspaceId)?.delete(key)
+        return true
+      }
+      if (res.response === 1) {
+        return true
+      }
+      let denied = this.deniedPermissions.get(workspaceId)
+      if (!denied) {
+        denied = new Set<string>()
+        this.deniedPermissions.set(workspaceId, denied)
+      }
+      denied.add(key)
+      return false
+    })().finally(() => {
+      this.pendingPermissionPrompts.delete(cacheKey)
+    })
+
+    this.pendingPermissionPrompts.set(cacheKey, task)
+    return task
   }
 
   private ensureSessionPolicies(
@@ -524,11 +705,36 @@ export class BrowserWindowManager
       callback(-3)
     })
 
-    ses.setPermissionCheckHandler((_webContents, permission) =>
-      ALLOWED_SESSION_PERMISSIONS.has(permission),
+    ses.setPermissionCheckHandler((_webContents, permission, requestingOrigin) =>
+      this.isPermissionGranted(workspaceId, requestingOrigin, permission),
     )
-    ses.setPermissionRequestHandler((_webContents, permission, callback) => {
-      callback(ALLOWED_SESSION_PERMISSIONS.has(permission))
+
+    ses.setPermissionRequestHandler((webContents, permission, callback, details) => {
+      if (AUTO_ALLOWED_PERMISSIONS.has(permission)) {
+        callback(true)
+        return
+      }
+      if (!PROMPTABLE_PERMISSIONS.has(permission)) {
+        callback(false)
+        return
+      }
+      const rawUrl = details?.requestingUrl || webContents.getURL()
+      let origin = rawUrl
+      try {
+        origin = new URL(rawUrl).origin
+      } catch {
+        // Keep rawUrl
+      }
+      const key = `${origin}|${permission}`
+      if (this.grantedPermissions.get(workspaceId)?.has(key)) {
+        callback(true)
+        return
+      }
+      if (this.deniedPermissions.get(workspaceId)?.has(key)) {
+        callback(false)
+        return
+      }
+      void this.promptWorkspacePermission(workspaceId, origin, permission).then(callback)
     })
   }
 
@@ -582,12 +788,23 @@ export class BrowserWindowManager
 
   reload(tabId: TabId, ignoreCache = false): void {
     const view = this.tabViews.get(tabId)
-    if (view && !view.webContents.isDestroyed()) {
-      if (ignoreCache) {
-        view.webContents.reloadIgnoringCache()
-      } else {
-        view.webContents.reload()
-      }
+    if (!view || view.webContents.isDestroyed()) return
+    const failedUrl = this.failedTabUrls.get(tabId)
+    if (failedUrl && view.webContents.getURL().startsWith('data:text/html')) {
+      void view.webContents
+        .loadURL(
+          failedUrl,
+          ignoreCache
+            ? { extraHeaders: 'Cache-Control: no-cache\nPragma: no-cache\n' }
+            : undefined,
+        )
+        .catch(() => undefined)
+      return
+    }
+    if (ignoreCache) {
+      view.webContents.reloadIgnoringCache()
+    } else {
+      view.webContents.reload()
     }
   }
 
@@ -743,6 +960,15 @@ export class BrowserWindowManager
     }
   }
 
+  private isTabAttachedElsewhere(tabId: TabId, targetWindowId: WindowId): boolean {
+    for (const [winId, win] of this.windows.entries()) {
+      if (winId !== targetWindowId && win.attachedTabId === tabId) {
+        return true
+      }
+    }
+    return false
+  }
+
   private async ensureActiveTabForWorkspace(workspaceId: WorkspaceId, windowId: WindowId): Promise<void> {
     const tabs = this.tabLifecycle.getTabs(workspaceId)
     if (tabs.length === 0) {
@@ -750,6 +976,13 @@ export class BrowserWindowManager
       return
     }
     const activeId = this.tabLifecycle.getActiveTabId(workspaceId) ?? tabs[0]!.id
+    if (this.isTabAttachedElsewhere(activeId, windowId)) {
+      const sourceTab = tabs.find((t) => t.id === activeId)
+      const fallbackUrl =
+        sourceTab?.url && /^https?:\/\//i.test(sourceTab.url) ? sourceTab.url : undefined
+      await this.tabLifecycle.createTab({ workspaceId, url: fallbackUrl, activate: true }, windowId)
+      return
+    }
     await this.tabLifecycle.activateTab(workspaceId, activeId, windowId)
   }
 
@@ -769,6 +1002,7 @@ export class BrowserWindowManager
       const currentUrl = wc.getURL()
       if (currentUrl.startsWith('data:text/html')) return
       this.pendingCertErrors.delete(tabId)
+      this.failedTabUrls.delete(tabId)
       void this.tabLifecycle.updateTabMeta(workspaceId, tabId, {
         url: currentUrl,
         title: wc.getTitle() || currentUrl,
@@ -776,6 +1010,19 @@ export class BrowserWindowManager
         canGoForward: wc.navigationHistory.canGoForward(),
       })
     }
+
+    wc.on('dom-ready', () => {
+      if (wc.isDestroyed()) return
+      const attachedWin = [...this.windows.values()].find(
+        (w) => !w.baseWindow.isDestroyed() && w.attachedTabId === tabId && !w.overlayOpen,
+      )
+      if (attachedWin) {
+        view.setVisible(true)
+        view.setBounds(attachedWin.viewportBounds)
+        wc.setBackgroundThrottling(false)
+        wc.invalidate()
+      }
+    })
 
     wc.on('certificate-error', (event, url, error, certificate, callback) => {
       let hostname = ''
@@ -873,6 +1120,7 @@ export class BrowserWindowManager
         }
       }
 
+      this.failedTabUrls.set(tabId, validatedURL)
       const html = buildLoadErrorHtml({
         url: validatedURL,
         errorCode,

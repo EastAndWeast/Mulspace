@@ -33,6 +33,7 @@ export interface ViewportBounds {
 export interface BrowserWindowSnapshot {
   windowId: WindowId
   activeWorkspaceId: WorkspaceId
+  activeTabId?: TabId | null
   workspaces: Workspace[]
   tabsByWorkspace: Record<WorkspaceId, Tab[]>
   settings: AppSettings

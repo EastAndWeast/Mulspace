@@ -46,7 +46,40 @@ describe('ThemeRegistry & MD3 token generator', () => {
     expect(registry.list().some((t) => t.id === 'custom-mint')).toBe(true)
 
     expect(() => registry.importFromJson('{"name":"missing-id"}')).toThrow()
+    expect(() => registry.importFromJson('{bad json')).toThrow(/语法无效/)
+    expect(() =>
+      registry.importFromJson('{"id":"vivaldi-compact","name":"Hijacked"}'),
+    ).toThrow(/不允许覆盖内置官方主题/)
+
+    const withInjection = registry.importFromJson(
+      JSON.stringify({
+        id: 'safe-custom',
+        name: 'Safe Custom',
+        density: 'compact',
+        defaultSeedColor: '#ff0000',
+        supportsDynamicWorkspaceColor: false,
+        tokenOverrides: {
+          light: {
+            '--wb-sys-color-primary': '#ff0000',
+            display: 'none',
+            '--wb-evil': 'red; color: blue',
+          },
+          dark: {
+            '--wb-sys-color-primary': '#ff0000',
+          },
+        },
+      }),
+    )
+    expect(withInjection.tokenOverrides).toEqual({
+      light: { '--wb-sys-color-primary': '#ff0000' },
+      dark: { '--wb-sys-color-primary': '#ff0000' },
+    })
+    const customTokens = registry.resolveManifestTokens(withInjection, 'light', '#0000ff')
+    expect(customTokens['--wb-sys-color-primary']).toBe('#ff0000')
+    expect(customTokens['--wb-sys-layout-rail-width']).toBe('50px')
+
     expect(registry.remove('material-you')).toBe(false)
     expect(registry.remove('custom-mint')).toBe(true)
+    expect(registry.remove('safe-custom')).toBe(true)
   })
 })

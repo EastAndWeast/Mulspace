@@ -1,6 +1,7 @@
 import { useState } from 'react'
 import type { AppSettings, TabMemorySummary, ThemeManifest, ThemeMode, UpdateState } from '@wb/contracts'
 import { Badge, Button, Dialog } from '@wb/ui-kit'
+import { formatIpcError } from '../utils/format-error.js'
 
 export interface SettingsDialogProps {
   open: boolean
@@ -108,7 +109,7 @@ export function SettingsDialog({
                 await window.browserApi.importThemeJson(themeJsonText)
                 setThemeMsg('主题导入成功！已出现在上方列表。')
               } catch (err) {
-                setThemeMsg(err instanceof Error ? err.message : String(err))
+                setThemeMsg(formatIpcError(err))
               }
             }}
           >

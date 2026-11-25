@@ -36,6 +36,7 @@ export interface TabLifecycleOptions {
   getWorkspace(workspaceId: WorkspaceId): Workspace | undefined
   getSettings(): AppSettings
   adapter: ITabViewAdapter
+  setWorkspaceActiveTab?(workspaceId: WorkspaceId, tabId: TabId | null): Promise<void> | void
 }
 
 export class TabLifecycleManager implements IKernelModule {
@@ -145,6 +146,7 @@ export class TabLifecycleManager implements IKernelModule {
       await this.activateTab(input.workspaceId, tab.id, windowId, now)
     } else if (shouldActivate) {
       this.activeTabByWorkspace.set(input.workspaceId, tab.id)
+      await this.options.setWorkspaceActiveTab?.(input.workspaceId, tab.id)
     }
 
     await this.persistWorkspaceTabs(input.workspaceId)
@@ -185,6 +187,7 @@ export class TabLifecycleManager implements IKernelModule {
     await this.options.adapter.attachView(tab.id, windowId)
     this.attachedWindowByTab.set(tab.id, windowId)
     this.activeTabByWorkspace.set(workspaceId, tab.id)
+    await this.options.setWorkspaceActiveTab?.(workspaceId, tab.id)
 
     tab.state = 'active'
     tab.lastActiveAt = now
@@ -236,6 +239,7 @@ export class TabLifecycleManager implements IKernelModule {
         }
       } else {
         this.activeTabByWorkspace.delete(workspaceId)
+        await this.options.setWorkspaceActiveTab?.(workspaceId, null)
       }
     }
 

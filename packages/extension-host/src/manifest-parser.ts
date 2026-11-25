@@ -11,8 +11,23 @@ export interface ParsedExtensionManifest {
 }
 
 export async function readExtensionManifest(dirPath: string): Promise<ParsedExtensionManifest> {
-  const raw = await readFile(join(dirPath, 'manifest.json'), 'utf8')
-  const json = JSON.parse(raw) as Record<string, unknown>
+  let raw: string
+  try {
+    raw = await readFile(join(dirPath, 'manifest.json'), 'utf8')
+  } catch (err) {
+    const code = (err as NodeJS.ErrnoException | undefined)?.code
+    if (code === 'ENOENT') {
+      throw new Error('安装包内缺少 manifest.json')
+    }
+    throw new Error('读取扩展 manifest.json 失败')
+  }
+
+  let json: Record<string, unknown>
+  try {
+    json = JSON.parse(raw) as Record<string, unknown>
+  } catch {
+    throw new Error('扩展 manifest.json 格式无效')
+  }
 
   const name = String(json.name ?? '').trim()
   const version = String(json.version ?? '1.0.0').trim()

@@ -174,56 +174,98 @@ export class BrowserMcpServer {
   }
 
   private async handleHttp(req: IncomingMessage, res: ServerResponse): Promise<void> {
-    const cfg = this.deps.getConfig()
-    const authHeader = req.headers.authorization ?? ''
-    if (authHeader !== `Bearer ${cfg.authToken}`) {
-      res.writeHead(401, { 'Content-Type': 'application/json' })
-      res.end(JSON.stringify({ error: 'Unauthorized: invalid MCP Bearer token' }))
-      return
-    }
-
-    if (req.method === 'GET' && req.url === '/health') {
-      res.writeHead(200, { 'Content-Type': 'application/json' })
-      res.end(JSON.stringify({ ok: true, workspaces: this.deps.listWorkspaces().length }))
-      return
-    }
-
-    if (req.method !== 'POST') {
-      res.writeHead(405, { 'Content-Type': 'application/json' })
-      res.end(JSON.stringify({ error: 'Method Not Allowed' }))
-      return
-    }
-
-    const chunks: Buffer[] = []
-    for await (const chunk of req) {
-      chunks.push(Buffer.isBuffer(chunk) ? chunk : Buffer.from(chunk))
-    }
-
-    let rpc: JsonRpcRequest
     try {
-      rpc = JSON.parse(Buffer.concat(chunks).toString('utf8')) as JsonRpcRequest
-    } catch {
-      res.writeHead(400, { 'Content-Type': 'application/json' })
-      res.end(JSON.stringify({ jsonrpc: '2.0', id: null, error: { code: -32700, message: 'Parse error' } }))
-      return
-    }
+      const cfg = this.deps.getConfig()
+      const authHeader = req.headers.authorization ?? ''
+      if (authHeader !== `Bearer ${cfg.authToken}`) {
+        res.writeHead(401, { 'Content-Type': 'application/json' })
+        res.end(JSON.stringify({ error: 'Unauthorized: invalid MCP Bearer token' }))
+        return
+      }
 
-    try {
-      const result = await this.dispatchRpc(rpc)
-      res.writeHead(200, { 'Content-Type': 'application/json' })
-      res.end(JSON.stringify({ jsonrpc: '2.0', id: rpc.id ?? null, result }))
+      const pathname = (req.url ?? '/').split('?')[0] ?? '/'
+
+      if (req.method === 'GET' && pathname === '/health') {
+        res.writeHead(200, { 'Content-Type': 'application/json' })
+        res.end(JSON.stringify({ ok: true, workspaces: this.deps.listWorkspaces().length }))
+        return
+      }
+
+      if (req.method !== 'POST') {
+        res.writeHead(405, { 'Content-Type': 'application/json' })
+        res.end(JSON.stringify({ error: 'Method Not Allowed' }))
+        return
+      }
+
+      if (pathname !== '/mcp' && pathname !== '/') {
+        res.writeHead(404, { 'Content-Type': 'application/json' })
+        res.end(JSON.stringify({ error: `Not Found: ${pathname}` }))
+        return
+      }
+
+      const chunks: Buffer[] = []
+      for await (const chunk of req) {
+        chunks.push(Buffer.isBuffer(chunk) ? chunk : Buffer.from(chunk))
+      }
+
+      let parsed: unknown
+      try {
+        parsed = JSON.parse(Buffer.concat(chunks).toString('utf8'))
+      } catch {
+        res.writeHead(400, { 'Content-Type': 'application/json' })
+        res.end(
+          JSON.stringify({
+            jsonrpc: '2.0',
+            id: null,
+            error: { code: -32700, message: 'Parse error' },
+          }),
+        )
+        return
+      }
+
+      if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed)) {
+        res.writeHead(400, { 'Content-Type': 'application/json' })
+        res.end(
+          JSON.stringify({
+            jsonrpc: '2.0',
+            id: null,
+            error: { code: -32600, message: 'Invalid Request' },
+          }),
+        )
+        return
+      }
+
+      const rpc = parsed as JsonRpcRequest
+      try {
+        const result = await this.dispatchRpc(rpc)
+        res.writeHead(200, { 'Content-Type': 'application/json' })
+        res.end(JSON.stringify({ jsonrpc: '2.0', id: rpc.id ?? null, result }))
+      } catch (err) {
+        res.writeHead(200, { 'Content-Type': 'application/json' })
+        res.end(
+          JSON.stringify({
+            jsonrpc: '2.0',
+            id: rpc.id ?? null,
+            error: {
+              code: -32000,
+              message: err instanceof Error ? err.message : String(err),
+            },
+          }),
+        )
+      }
     } catch (err) {
-      res.writeHead(200, { 'Content-Type': 'application/json' })
-      res.end(
-        JSON.stringify({
-          jsonrpc: '2.0',
-          id: rpc.id ?? null,
-          error: {
-            code: -32000,
-            message: err instanceof Error ? err.message : String(err),
-          },
-        }),
-      )
+      if (!res.headersSent) {
+        res.writeHead(500, { 'Content-Type': 'application/json' })
+      }
+      if (!res.writableEnded) {
+        res.end(
+          JSON.stringify({
+            jsonrpc: '2.0',
+            id: null,
+            error: { code: -32603, message: err instanceof Error ? err.message : String(err) },
+          }),
+        )
+      }
     }
   }
 
@@ -276,7 +318,8 @@ export class BrowserMcpServer {
 
     const tabId = this.resolveTargetTabId(workspaceId, args.tabId ? String(args.tabId) : undefined)
     if (name === 'navigate') {
-      return this.deps.bridge.navigate(tabId, String(args.url ?? ''))
+      const safeUrl = this.deps.guard.assertSafeNavigationUrl(String(args.url ?? ''))
+      return this.deps.bridge.navigate(tabId, safeUrl)
     }
     if (name === 'get_page_snapshot') {
       const snap = await this.deps.bridge.getAccessibilitySnapshot(tabId)

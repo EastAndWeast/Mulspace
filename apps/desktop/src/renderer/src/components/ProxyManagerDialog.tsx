@@ -1,4 +1,4 @@
-import { useState } from 'react'
+import { useEffect, useState } from 'react'
 import type {
   ProxyEngineStatus,
   ProxyNode,
@@ -8,6 +8,7 @@ import type {
   WorkspaceProxyMode,
 } from '@wb/contracts'
 import { Badge, Button, Dialog, Input } from '@wb/ui-kit'
+import { formatIpcError } from '../utils/format-error.js'
 
 export interface ProxyManagerDialogProps {
   open: boolean
@@ -41,10 +42,17 @@ export function ProxyManagerDialog({
   const [subName, setSubName] = useState('')
   const [subUrl, setSubUrl] = useState('')
   const [subContent, setSubContent] = useState('')
-  const [customUrl, setCustomUrl] = useState(workspace.proxy.customUrl ?? 'http://127.0.0.1:7890')
+  const [customUrl, setCustomUrl] = useState(workspace.proxy.customUrl ?? '')
+  const [showCustomUrl, setShowCustomUrl] = useState(false)
   const [binaryInput, setBinaryInput] = useState(defaultBinaryPath ?? '')
   const [busy, setBusy] = useState(false)
   const [error, setError] = useState<string | null>(null)
+
+  useEffect(() => {
+    setCustomUrl(workspace.proxy.customUrl ?? '')
+    setShowCustomUrl(false)
+    setError(null)
+  }, [workspace.id, workspace.proxy.customUrl, open])
 
   const wsStatus = proxyStatus.workspaceStatuses[workspace.id]
 
@@ -54,7 +62,7 @@ export function ProxyManagerDialog({
     try {
       await fn()
     } catch (err) {
-      setError(err instanceof Error ? err.message : String(err))
+      setError(formatIpcError(err))
     } finally {
       setBusy(false)
     }
@@ -134,10 +142,19 @@ export function ProxyManagerDialog({
 
         <div style={{ display: 'flex', gap: 8 }}>
           <Input
+            type={!showCustomUrl && customUrl.includes('@') ? 'password' : 'text'}
             value={customUrl}
             onChange={(e) => setCustomUrl(e.target.value)}
             placeholder="socks5://user:pass@127.0.0.1:10808 或 http://127.0.0.1:7890"
           />
+          {customUrl.includes('@') ? (
+            <Button
+              variant="text"
+              onClick={() => setShowCustomUrl((prev) => !prev)}
+            >
+              {showCustomUrl ? '隐藏' : '显示'}
+            </Button>
+          ) : null}
           <Button
             variant="tonal"
             disabled={busy || !customUrl.trim()}

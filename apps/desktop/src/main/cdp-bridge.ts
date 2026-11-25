@@ -1,4 +1,9 @@
-import type { AccessibilityElementRef, ICdpAutomationBridge, PageSnapshotResult } from '@wb/ai-runtime'
+import {
+  assertSafeAiNavigationUrl,
+  type AccessibilityElementRef,
+  type ICdpAutomationBridge,
+  type PageSnapshotResult,
+} from '@wb/ai-runtime'
 import type { Tab, TabId, WorkspaceId } from '@wb/contracts'
 import type { TabLifecycleManager } from '@wb/tab-lifecycle'
 import type { WebContents } from 'electron'
@@ -29,6 +34,9 @@ export class ElectronCdpAutomationBridge implements ICdpAutomationBridge {
   async getAccessibilitySnapshot(tabId: TabId): Promise<PageSnapshotResult> {
     const wc = this.requireWebContents(tabId)
     const url = wc.getURL()
+    if (url.toLowerCase().startsWith('file:')) {
+      throw new Error('安全护栏拦截：禁止 AI / MCP 读取本地 file:// 文件内容')
+    }
     const title = wc.getTitle()
 
     // Use CDP Accessibility tree when possible, plus interactive DOM ref annotation for click/type
@@ -121,8 +129,9 @@ export class ElectronCdpAutomationBridge implements ICdpAutomationBridge {
   }
 
   async navigate(tabId: TabId, url: string): Promise<string> {
-    this.windowManager.navigate(tabId, url)
-    return `正在导航至 ${url}`
+    const safeUrl = assertSafeAiNavigationUrl(url)
+    this.windowManager.navigate(tabId, safeUrl)
+    return `正在导航至 ${safeUrl}`
   }
 
   private requireWebContents(tabId: TabId): WebContents {
