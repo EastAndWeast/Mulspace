@@ -1,6 +1,6 @@
 {
   "name": "workspace-browser",
-  "version": "0.1.7",
+  "version": "0.1.8",
   "private": true,
   "description": "Multi-account workspace AI browser with microkernel architecture and Material 3 theme separation",
   "scripts": {

@@ -1,4 +1,5 @@
-import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
+import { type CSSProperties, useCallback, useEffect, useMemo, useRef, useState } from 'react'
+import { NEW_TAB_URL } from '@wb/contracts'
 import type {
   AgentMessage,
   BrowserWindowSnapshot,
@@ -6,25 +7,30 @@ import type {
   Tab,
   Workspace,
 } from '@wb/contracts'
-import { A2UISurface, Badge, Button, IconButton, ThemeProvider } from '@wb/ui-kit'
+import { A2UISurface, Button, IconButton, ThemeProvider } from '@wb/ui-kit'
 import {
   ArrowLeft,
   ArrowRight,
+  ArrowUpRight,
   Bot,
   Code2,
+  Compass,
   ExternalLink,
   Globe,
+  Lock,
   Moon,
-  Palette,
+  Network,
+  PanelRight,
   Pin,
   Plus,
   Puzzle,
   RotateCw,
+  Search,
   Send,
   Settings,
-  ShieldCheck,
+  SlidersHorizontal,
   Snowflake,
-  Sparkles,
+  TerminalSquare,
   Trash2,
   Volume2,
   VolumeX,
@@ -32,9 +38,34 @@ import {
 } from 'lucide-react'
 import { AiHubDialog } from './components/AiHubDialog.js'
 import { ExtensionsDialog } from './components/ExtensionsDialog.js'
+import { NewTabPage } from './components/NewTabPage.js'
 import { ProxyManagerDialog } from './components/ProxyManagerDialog.js'
 import { SettingsDialog } from './components/SettingsDialog.js'
 import { WorkspaceEditorDialog } from './components/WorkspaceEditorDialog.js'
+import { WorkspaceGlyph } from './components/WorkspaceGlyph.js'
+import brandIcon from '../../../build/icon.svg'
+
+function TabSymbol({ tab }: { tab: Tab }) {
+  const [faviconFailedUrl, setFaviconFailedUrl] = useState<string | null>(null)
+
+  if (tab.loading) {
+    return <span className="wb-tab__spinner" />
+  }
+  if (tab.url === NEW_TAB_URL) {
+    return <Compass size={13} strokeWidth={1.75} />
+  }
+  if (tab.faviconUrl && faviconFailedUrl !== tab.faviconUrl) {
+    return (
+      <img
+        className="wb-tab__favicon"
+        src={tab.faviconUrl}
+        alt=""
+        onError={() => setFaviconFailedUrl(tab.faviconUrl ?? null)}
+      />
+    )
+  }
+  return <Globe size={13} strokeWidth={1.75} />
+}
 
 export function App() {
   const [snapshot, setSnapshot] = useState<BrowserWindowSnapshot | null>(null)
@@ -94,7 +125,7 @@ export function App() {
 
   useEffect(() => {
     if (activeTab && document.activeElement !== omniboxRef.current) {
-      setAddressInput(activeTab.url)
+      setAddressInput(activeTab.url === NEW_TAB_URL ? '' : activeTab.url)
     }
   }, [activeTab?.id, activeTab?.url])
 
@@ -136,7 +167,10 @@ export function App() {
 
   if (!snapshot || !activeWorkspace) {
     return (
-      <div style={{ padding: 24, fontFamily: 'sans-serif' }}>正在初始化 WorkspaceBrowser 内核...</div>
+      <div className="wb-launch" role="status">
+        <img src={brandIcon} width="32" height="32" alt="" />
+        <span>正在启动 Mulspace…</span>
+      </div>
     )
   }
 
@@ -144,15 +178,26 @@ export function App() {
     ? activeWorkspace.seedColor
     : snapshot.settings.customSeedColor
 
+  const showNewTab = activeTab?.url === NEW_TAB_URL
+  const openWorkspaceEditor = (workspace: Workspace | null): void => {
+    setEditingWorkspace(workspace)
+    setWsDialogOpen(true)
+  }
+  const navigate = (input: string): void => {
+    if (!activeTab || !input.trim()) return
+    omniboxRef.current?.blur()
+    void window.browserApi.navigateTab(activeWorkspace.id, activeTab.id, input)
+  }
+
   const wsProxyStatus = snapshot.proxyStatus.workspaceStatuses[activeWorkspace.id]
   const proxyLabel =
     wsProxyStatus?.mode === 'managed-node' && wsProxyStatus.nodeName
-      ? `代理: ${wsProxyStatus.nodeName}${wsProxyStatus.latencyMs ? ` · ${wsProxyStatus.latencyMs}ms` : ''}`
+      ? `${wsProxyStatus.nodeName}${wsProxyStatus.latencyMs ? ` · ${wsProxyStatus.latencyMs}ms` : ''}`
       : wsProxyStatus?.mode === 'custom'
-        ? '代理: 自定义节点'
+        ? '自定义代理'
         : wsProxyStatus?.mode === 'system'
-          ? '代理: 跟随系统'
-          : '代理: 直连'
+          ? '系统代理'
+          : '直连'
 
   const activeWorkspaceExtensions = snapshot.extensions.filter((ext) => {
     if (ext.disabledWorkspaces.includes(activeWorkspace.id)) return false
@@ -160,11 +205,13 @@ export function App() {
     return ext.enabledGlobally
   })
 
+  const trimmedAddress = addressInput.trim()
+  const isSecureHttps = !showNewTab && /^https:\/\//i.test(trimmedAddress)
+  const isNavUrl = !showNewTab && /^[a-z][a-z\d+\-.]*:/i.test(trimmedAddress)
+
   const handleNavigateSubmit = (e: React.FormEvent): void => {
     e.preventDefault()
-    if (!activeTab) return
-    omniboxRef.current?.blur()
-    void window.browserApi.navigateTab(activeWorkspace.id, activeTab.id, addressInput)
+    navigate(addressInput)
   }
 
   const handleSendChat = async (promptText: string): Promise<void> => {
@@ -187,19 +234,34 @@ export function App() {
       seedColorOverride={dynamicSeed}
     >
       <div className="wb-shell">
-        {/* Left Vivaldi-style Workspace Rail */}
         <aside className="wb-rail" aria-label="账号工作区栏">
+          <button
+            type="button"
+            className="wb-rail__brand"
+            title="Mulspace · 新建标签页"
+            aria-label="打开 Mulspace 新标签页"
+            onClick={() => void window.browserApi.createTab(activeWorkspace.id)}
+          >
+            <img src={brandIcon} width="32" height="32" alt="" />
+          </button>
+
           <div className="wb-rail__list">
             {snapshot.workspaces.map((ws) => {
               const isActive = ws.id === activeWorkspace.id
               const tabCount = (snapshot.tabsByWorkspace[ws.id] ?? []).length
               return (
-                <div key={ws.id} className="wb-rail__item-wrap">
+                <div
+                  key={ws.id}
+                  className={`wb-rail__item-wrap ${isActive ? 'wb-rail__item-wrap--active' : ''}`}
+                  style={{ '--ws-accent': ws.seedColor } as CSSProperties}
+                >
+                  <span className="wb-rail__indicator" aria-hidden="true" />
                   <button
                     type="button"
                     className={`wb-rail__item ${isActive ? 'wb-rail__item--active' : ''}`}
-                    style={{ borderColor: isActive ? ws.seedColor : undefined }}
-                    title={`${ws.name} (${tabCount} 个标签) — 右键编辑`}
+                    aria-current={isActive ? true : undefined}
+                    aria-label={ws.name}
+                    title={`${ws.name}（${tabCount} 个标签）· 右键编辑`}
                     onMouseDown={(e) => {
                       if (e.button === 0 && !isActive) {
                         void window.browserApi.switchWorkspace(ws.id)
@@ -212,14 +274,10 @@ export function App() {
                     }}
                     onContextMenu={(e) => {
                       e.preventDefault()
-                      setEditingWorkspace(ws)
-                      setWsDialogOpen(true)
+                      openWorkspaceEditor(ws)
                     }}
                   >
-                    {isActive ? (
-                      <span className="wb-rail__dot" style={{ backgroundColor: ws.seedColor }} />
-                    ) : null}
-                    <span>{ws.icon}</span>
+                    <WorkspaceGlyph value={ws.icon} size={18} />
                   </button>
                   <span className="wb-rail__label">{ws.name}</span>
                 </div>
@@ -227,43 +285,38 @@ export function App() {
             })}
 
             <IconButton
+              className="wb-rail__add"
               title="新建独立账号工作区"
-              onClick={() => {
-                setEditingWorkspace(null)
-                setWsDialogOpen(true)
-              }}
+              onClick={() => openWorkspaceEditor(null)}
             >
-              <Plus size={18} />
+              <Plus size={17} />
             </IconButton>
           </div>
 
-          <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', gap: 6 }}>
+          <div className="wb-rail__tools">
             <IconButton
-              title="在新窗口打开当前工作区（多开）"
+              title="在新窗口打开当前工作区"
               onClick={() => void window.browserApi.openWorkspaceInNewWindow(activeWorkspace.id)}
             >
               <ExternalLink size={16} />
             </IconButton>
-            <IconButton title="网络代理配置 (Clash / V2Ray)" onClick={() => setProxyDialogOpen(true)}>
-              <Globe size={16} />
+            <IconButton title="网络代理配置" onClick={() => setProxyDialogOpen(true)}>
+              <Network size={16} />
             </IconButton>
-            <IconButton title="Chrome 扩展管理" onClick={() => setExtDialogOpen(true)}>
+            <IconButton title="扩展程序管理" onClick={() => setExtDialogOpen(true)}>
               <Puzzle size={16} />
             </IconButton>
-            <IconButton title="AI 模型 / Skills / MCP / 批量任务" onClick={() => setAiHubOpen(true)}>
-              <Sparkles size={16} />
+            <IconButton title="AI 与 MCP 中心" onClick={() => setAiHubOpen(true)}>
+              <TerminalSquare size={16} />
             </IconButton>
             <IconButton
               title="编辑当前工作区"
-              onClick={() => {
-                setEditingWorkspace(activeWorkspace)
-                setWsDialogOpen(true)
-              }}
+              onClick={() => openWorkspaceEditor(activeWorkspace)}
             >
-              <Settings size={16} />
+              <SlidersHorizontal size={16} />
             </IconButton>
-            <IconButton title="主题与内存调度设置" onClick={() => setSettingsOpen(true)}>
-              <Palette size={16} />
+            <IconButton title="浏览器设置" onClick={() => setSettingsOpen(true)}>
+              <Settings size={16} />
             </IconButton>
           </div>
         </aside>
@@ -294,12 +347,15 @@ export function App() {
                     void window.browserApi.showTabContextMenu(activeWorkspace.id, tab.id)
                   }}
                 >
-                  {tab.pinned ? <Pin size={12} /> : null}
-                  {tab.aiBusy ? <Bot size={12} /> : null}
+                  <span className="wb-tab__symbol" aria-hidden="true">
+                    <TabSymbol tab={tab} />
+                  </span>
+                  {tab.pinned ? <Pin size={11} className="wb-tab__meta-icon" /> : null}
+                  {tab.aiBusy ? <Bot size={12} className="wb-tab__meta-icon" /> : null}
                   {tab.muted || tab.audible ? (
                     <button
                       type="button"
-                      className="wb-tab__close"
+                      className="wb-tab__audio"
                       title={tab.muted ? '取消静音' : '静音此标签页'}
                       onMouseDown={(e) => e.stopPropagation()}
                       onClick={(e) => {
@@ -311,18 +367,17 @@ export function App() {
                     </button>
                   ) : null}
                   {tab.state === 'frozen' ? (
-                    <span title="轻量冻结中（保留 DOM）">
-                      <Snowflake size={12} />
+                    <span className="wb-tab__meta-icon" title="后台休眠中（保留状态）">
+                      <Snowflake size={11} />
                     </span>
                   ) : null}
                   {tab.state === 'discarded' ? (
-                    <span title="已深度释放内存（点击恢复）">
-                      <Moon size={12} />
+                    <span className="wb-tab__meta-icon" title="已释放内存（点击恢复）">
+                      <Moon size={11} />
                     </span>
                   ) : null}
                   <span className="wb-tab__title">
-                    {tab.loading ? '加载中… ' : ''}
-                    {tab.title || tab.url}
+                    {tab.url === NEW_TAB_URL ? '新标签页' : tab.title || tab.url}
                   </span>
                   <button
                     type="button"
@@ -340,7 +395,8 @@ export function App() {
               )
             })}
             <IconButton
-              title="新建标签页"
+              className="wb-tabbar__add"
+              title="新建标签页 (⌘T)"
               onClick={() => void window.browserApi.createTab(activeWorkspace.id)}
             >
               <Plus size={15} />
@@ -348,149 +404,174 @@ export function App() {
           </div>
 
           <div className="wb-toolbar">
-            <IconButton
-              title="后退"
-              disabled={!activeTab?.canGoBack}
-              onClick={() =>
-                activeTab && void window.browserApi.goBack(activeWorkspace.id, activeTab.id)
-              }
-            >
-              <ArrowLeft size={16} />
-            </IconButton>
-            <IconButton
-              title="前进"
-              disabled={!activeTab?.canGoForward}
-              onClick={() =>
-                activeTab && void window.browserApi.goForward(activeWorkspace.id, activeTab.id)
-              }
-            >
-              <ArrowRight size={16} />
-            </IconButton>
-            <IconButton
-              title="刷新（Shift+点击 或 右键强制刷新）"
-              disabled={!activeTab}
-              onClick={(e) =>
-                activeTab && void window.browserApi.reloadTab(activeWorkspace.id, activeTab.id, e.shiftKey)
-              }
-              onContextMenu={(e) => {
-                e.preventDefault()
-                if (activeTab) {
-                  void window.browserApi.showReloadMenu(activeWorkspace.id, activeTab.id)
+            <div className="wb-toolbar__nav">
+              <IconButton
+                title="后退"
+                disabled={!activeTab?.canGoBack}
+                onClick={() =>
+                  activeTab && void window.browserApi.goBack(activeWorkspace.id, activeTab.id)
                 }
-              }}
-            >
-              <RotateCw size={15} />
-            </IconButton>
+              >
+                <ArrowLeft size={16} />
+              </IconButton>
+              <IconButton
+                title="前进"
+                disabled={!activeTab?.canGoForward}
+                onClick={() =>
+                  activeTab && void window.browserApi.goForward(activeWorkspace.id, activeTab.id)
+                }
+              >
+                <ArrowRight size={16} />
+              </IconButton>
+              <IconButton
+                title="刷新（Shift+点击或右键强制刷新）"
+                disabled={!activeTab}
+                onClick={(e) =>
+                  activeTab && void window.browserApi.reloadTab(activeWorkspace.id, activeTab.id, e.shiftKey)
+                }
+                onContextMenu={(e) => {
+                  e.preventDefault()
+                  if (activeTab) {
+                    void window.browserApi.showReloadMenu(activeWorkspace.id, activeTab.id)
+                  }
+                }}
+              >
+                <RotateCw size={15} />
+              </IconButton>
+            </div>
 
-            <form onSubmit={handleNavigateSubmit} style={{ flex: 1, display: 'flex' }}>
+            <form onSubmit={handleNavigateSubmit} className="wb-address">
+              <span className="wb-address__icon" aria-hidden="true">
+                {isSecureHttps ? (
+                  <Lock size={13} strokeWidth={1.8} className="wb-address__secure" />
+                ) : isNavUrl ? (
+                  <Globe size={14} strokeWidth={1.7} />
+                ) : (
+                  <Search size={14} strokeWidth={1.7} />
+                )}
+              </span>
               <input
                 ref={omniboxRef}
                 className="wb-omnibox"
                 value={addressInput}
                 onChange={(e) => setAddressInput(e.target.value)}
-                placeholder="输入网址或搜索关键词..."
+                onFocus={(e) => e.currentTarget.select()}
+                placeholder="输入网址或搜索…"
                 aria-label="地址栏"
+                spellCheck={false}
               />
             </form>
 
-            <Badge
-              tone="primary"
-              style={{ cursor: 'pointer' }}
-              title={`存储分区: ${activeWorkspace.partition}`}
-              onClick={() => {
-                setEditingWorkspace(activeWorkspace)
-                setWsDialogOpen(true)
-              }}
-            >
-              <ShieldCheck size={12} />
-              <span>
-                {activeWorkspace.icon} {activeWorkspace.name}
-              </span>
-            </Badge>
-
-            <Badge
-              style={{ cursor: 'pointer' }}
-              title="点击配置当前工作区代理节点"
-              onClick={() => setProxyDialogOpen(true)}
-            >
-              <Globe size={11} />
-              <span>{proxyLabel}</span>
-            </Badge>
-
-            {snapshot.updateState.status === 'available' ? (
-              <Badge
-                tone="primary"
-                style={{ cursor: 'pointer' }}
-                title="点击查看更新详情并下载"
-                onClick={() => setSettingsOpen(true)}
+            <div className="wb-toolbar__meta">
+              <button
+                type="button"
+                className="wb-toolbar-chip wb-toolbar-chip--workspace"
+                title={`当前工作区：${activeWorkspace.name}（分区 ${activeWorkspace.partition}）`}
+                onClick={() => openWorkspaceEditor(activeWorkspace)}
               >
-                新版本 v{snapshot.updateState.latestVersion}
-              </Badge>
-            ) : null}
+                <span className="wb-toolbar-chip__dot" style={{ backgroundColor: activeWorkspace.seedColor }} />
+                <span>{activeWorkspace.name}</span>
+              </button>
 
-            {activeWorkspaceExtensions.slice(0, 3).map((ext) => (
+              <button
+                type="button"
+                className="wb-toolbar-chip wb-toolbar-chip--proxy"
+                title={`当前代理：${proxyLabel} · 点击配置`}
+                onClick={() => setProxyDialogOpen(true)}
+              >
+                <Network size={13} strokeWidth={1.75} aria-hidden="true" />
+                <span>{proxyLabel}</span>
+              </button>
+
+              {snapshot.updateState.status === 'available' ? (
+                <button
+                  type="button"
+                  className="wb-toolbar-update"
+                  title="查看新版本更新"
+                  onClick={() => setSettingsOpen(true)}
+                >
+                  <span>v{snapshot.updateState.latestVersion}</span>
+                  <ArrowUpRight size={12} strokeWidth={1.9} aria-hidden="true" />
+                </button>
+              ) : null}
+
+              {activeWorkspaceExtensions.slice(0, 3).map((ext) => (
+                <IconButton
+                  key={ext.id}
+                  title={ext.name}
+                  onClick={() =>
+                    ext.popupPath
+                      ? void window.browserApi.openExtensionPopup(activeWorkspace.id, ext.id)
+                      : setExtDialogOpen(true)
+                  }
+                >
+                  <Puzzle size={14} />
+                </IconButton>
+              ))}
+
               <IconButton
-                key={ext.id}
-                title={`扩展：${ext.name}`}
+                title={activeTab?.pinned ? '取消固定标签' : '固定当前标签'}
+                active={activeTab?.pinned}
+                disabled={!activeTab}
                 onClick={() =>
-                  ext.popupPath
-                    ? void window.browserApi.openExtensionPopup(activeWorkspace.id, ext.id)
-                    : setExtDialogOpen(true)
+                  activeTab && void window.browserApi.togglePinTab(activeWorkspace.id, activeTab.id)
                 }
               >
-                <Puzzle size={14} />
+                <Pin size={15} />
               </IconButton>
-            ))}
 
-            <IconButton
-              title="切换固定当前标签"
-              active={activeTab?.pinned}
-              disabled={!activeTab}
-              onClick={() =>
-                activeTab && void window.browserApi.togglePinTab(activeWorkspace.id, activeTab.id)
-              }
-            >
-              <Pin size={15} />
-            </IconButton>
+              <IconButton
+                title="开发者工具"
+                disabled={!activeTab}
+                onClick={() =>
+                  activeTab && void window.browserApi.openDevTools(activeWorkspace.id, activeTab.id)
+                }
+              >
+                <Code2 size={15} />
+              </IconButton>
 
-            <IconButton
-              title="打开当前标签 DevTools"
-              disabled={!activeTab}
-              onClick={() =>
-                activeTab && void window.browserApi.openDevTools(activeWorkspace.id, activeTab.id)
-              }
-            >
-              <Code2 size={15} />
-            </IconButton>
-
-            <IconButton
-              title="工作区隔离 AI Agent 侧边栏"
-              active={aiSidebarOpen}
-              onClick={() => setAiSidebarOpen((prev) => !prev)}
-            >
-              <Bot size={16} />
-            </IconButton>
+              <IconButton
+                title="AI 助手侧边栏"
+                active={aiSidebarOpen}
+                onClick={() => setAiSidebarOpen((prev) => !prev)}
+              >
+                <PanelRight size={16} />
+              </IconButton>
+            </div>
           </div>
 
           <div className="wb-content-row">
             <div ref={viewportRef} className="wb-viewport-slot">
-              <span style={{ fontSize: 12, color: 'var(--wb-sys-color-on-surface-variant)' }}>
-                正在承载工作区「{activeWorkspace.name}」的独立渲染视图…
-              </span>
+              {showNewTab ? (
+                <NewTabPage
+                  key={activeTab.id}
+                  workspace={activeWorkspace}
+                  workspaces={snapshot.workspaces}
+                  tabsByWorkspace={snapshot.tabsByWorkspace}
+                  proxyLabel={proxyLabel}
+                  onNavigate={navigate}
+                  onSwitchWorkspace={(id) => void window.browserApi.switchWorkspace(id)}
+                  onCreateWorkspace={() => openWorkspaceEditor(null)}
+                />
+              ) : null}
             </div>
 
             {aiSidebarOpen ? (
               <aside className="wb-sidebar" aria-label="工作区 AI 助手侧边栏">
-                <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
-                  <strong style={{ fontSize: 13 }}>
-                    {activeWorkspace.icon} {activeWorkspace.name} · 隔离 Agent
-                  </strong>
-                  <div style={{ display: 'flex', gap: 4 }}>
-                    <IconButton title="AI / Skills / MCP 中心" onClick={() => setAiHubOpen(true)}>
-                      <Sparkles size={14} />
+                <div className="wb-sidebar__header">
+                  <div className="wb-sidebar__identity">
+                    <strong>浏览助手</strong>
+                    <span>
+                      <i className="wb-sidebar__ws-dot" style={{ backgroundColor: activeWorkspace.seedColor }} />
+                      {activeWorkspace.name}
+                    </span>
+                  </div>
+                  <div className="wb-sidebar__actions">
+                    <IconButton title="AI / MCP 配置" onClick={() => setAiHubOpen(true)}>
+                      <SlidersHorizontal size={14} />
                     </IconButton>
                     <IconButton
-                      title="清空本空间对话"
+                      title="清空对话"
                       onClick={() =>
                         void window.browserApi
                           .clearAgentMessages(activeWorkspace.id)
@@ -499,80 +580,59 @@ export function App() {
                     >
                       <Trash2 size={14} />
                     </IconButton>
+                    <IconButton title="收起侧边栏" onClick={() => setAiSidebarOpen(false)}>
+                      <X size={15} />
+                    </IconButton>
                   </div>
                 </div>
 
-                {/* Quick Skills */}
-                <div style={{ display: 'flex', flexWrap: 'wrap', gap: 6 }}>
-                  {skills.slice(0, 4).map((skill) => (
-                    <Button
-                      key={skill.id}
-                      variant="tonal"
-                      disabled={agentBusy}
-                      onClick={async () => {
-                        setAgentBusy(true)
-                        try {
-                          const updated = await window.browserApi.runSkill(activeWorkspace.id, skill.id)
-                          setAgentMessages(updated)
-                        } finally {
-                          setAgentBusy(false)
-                        }
-                      }}
-                    >
-                      {skill.name}
-                    </Button>
-                  ))}
-                </div>
+                {skills.length > 0 ? (
+                  <div className="wb-sidebar__skills">
+                    {skills.slice(0, 4).map((skill) => (
+                      <Button
+                        key={skill.id}
+                        variant="outlined"
+                        disabled={agentBusy}
+                        onClick={async () => {
+                          setAgentBusy(true)
+                          try {
+                            const updated = await window.browserApi.runSkill(activeWorkspace.id, skill.id)
+                            setAgentMessages(updated)
+                          } finally {
+                            setAgentBusy(false)
+                          }
+                        }}
+                      >
+                        {skill.name}
+                      </Button>
+                    ))}
+                  </div>
+                ) : null}
 
-                {/* Messages */}
-                <div style={{ flex: 1, overflowY: 'auto', display: 'flex', flexDirection: 'column', gap: 10 }}>
+                <div className="wb-sidebar__messages">
                   {agentMessages.length === 0 ? (
-                    <A2UISurface
-                      schema={{
-                        surfaceId: 'welcome-card',
-                        title: '工作区专属 AI 助手已就绪',
-                        badge: 'Strict Isolation',
-                        nodes: [
-                          {
-                            type: 'text',
-                            id: 't1',
-                            tone: 'muted',
-                            text: '所有对话、Skill 与 MCP 工具调用均锁定在当前工作区内，绝不跨账号泄露 Cookie 或上下文。',
-                          },
-                          {
-                            type: 'action-row',
-                            id: 'a1',
-                            actions: [
-                              { id: 'open-hub', label: '配置模型 / MCP', variant: 'tonal' },
-                              { id: 'audit', label: '立即体检当前页', variant: 'filled' },
-                            ],
-                          },
-                        ],
-                      }}
-                      onAction={(act) => {
-                        if (act === 'open-hub') setAiHubOpen(true)
-                        if (act === 'audit') void handleSendChat('请读取并总结当前页面内容，检查工作区环境')
-                      }}
-                    />
+                    <div className="wb-sidebar__empty">
+                      <strong>围绕当前页面提问</strong>
+                      <p>对话与上下文仅限「{activeWorkspace.name}」工作区。</p>
+                      <div className="wb-sidebar__empty-actions">
+                        <Button
+                          variant="tonal"
+                          onClick={() => void handleSendChat('请读取并总结当前页面内容，检查工作区环境')}
+                        >
+                          总结当前页
+                        </Button>
+                        <Button variant="text" onClick={() => setAiHubOpen(true)}>
+                          模型与 MCP
+                        </Button>
+                      </div>
+                    </div>
                   ) : (
                     agentMessages.map((msg) => (
-                      <div key={msg.id} style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
+                      <div key={msg.id} className="wb-sidebar__msg-group">
                         <div
-                          style={{
-                            padding: '8px 10px',
-                            borderRadius: 'var(--wb-sys-radius-sm)',
-                            fontSize: 12,
-                            lineHeight: 1.5,
-                            userSelect: 'text',
-                            backgroundColor:
-                              msg.role === 'user'
-                                ? 'var(--wb-sys-color-primary-container)'
-                                : 'var(--wb-sys-color-surface-container)',
-                            color:
-                              msg.role === 'user'
-                                ? 'var(--wb-sys-color-on-primary-container)'
-                                : 'var(--wb-sys-color-on-surface)',
-                          }}
+                          className={`wb-sidebar__msg ${
+                            msg.role === 'user' ? 'wb-sidebar__msg--user' : 'wb-sidebar__msg--assistant'
+                          }`}
                         >
                           {msg.content}
                         </div>
@@ -592,23 +652,23 @@ export function App() {
                   )}
                 </div>
 
-                {/* Chat Input */}
                 <form
+                  className="wb-sidebar__composer"
                   onSubmit={(e) => {
                     e.preventDefault()
                     void handleSendChat(chatPrompt)
                   }}
-                  style={{ display: 'flex', gap: 6 }}
                 >
                   <input
                     className="wb-omnibox"
                     value={chatPrompt}
                     disabled={agentBusy}
                     onChange={(e) => setChatPrompt(e.target.value)}
-                    placeholder={agentBusy ? 'Agent 执行中…' : '向当前工作区 AI 下达指令...'}
+                    aria-label="给浏览助手发消息"
+                    placeholder={agentBusy ? '正在思考…' : '围绕当前页提问…'}
                   />
                   <IconButton type="submit" disabled={agentBusy || !chatPrompt.trim()} title="发送">
-                    <Send size={15} />
+                    <Send size={14} />
                   </IconButton>
                 </form>
               </aside>

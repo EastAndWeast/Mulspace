@@ -3,7 +3,7 @@ import type { ThemeManifest } from '@wb/contracts'
 export const obsidianProTheme: ThemeManifest = {
   id: 'obsidian-pro',
   name: 'Obsidian Pro',
-  description: 'OLED 深黑高对比度极客风，长时间多号盯盘与 AI 自动化编排护眼首选',
+  description: '深色背景与更强的对比。',
   author: 'WorkspaceBrowser Core',
   defaultMode: 'dark',
   defaultSeedColor: '#6366F1',

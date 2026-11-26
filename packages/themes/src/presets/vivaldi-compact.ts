@@ -3,7 +3,7 @@ import type { ThemeManifest } from '@wb/contracts'
 export const vivaldiCompactTheme: ThemeManifest = {
   id: 'vivaldi-compact',
   name: 'Vivaldi Compact',
-  description: '高信息密度效率主题，紧凑边栏与锐利边角，适合同时管理大量账号工作区',
+  description: '紧凑标签页和更窄的工作区栏。',
   author: 'WorkspaceBrowser Core',
   defaultMode: 'dark',
   defaultSeedColor: '#EF4444',

@@ -7,7 +7,7 @@ import { DEFAULT_APP_SETTINGS, JsonStorageRepository } from '@wb/storage'
 import type { AppSettings, Tab, TabId, Workspace } from '@wb/contracts'
 import { TabLifecycleManager, type ITabViewAdapter } from '../tab-lifecycle-manager.js'
 
-const tempDirs: string[] = []
+const fixtures: Array<{ dir: string; kernel: BrowserKernel }> = []
 
 class FakeViewAdapter implements ITabViewAdapter {
   created = new Set<TabId>()
@@ -40,7 +40,6 @@ class FakeViewAdapter implements ITabViewAdapter {
 
 async function setup(settingsPatch?: Partial<AppSettings>) {
   const dir = await mkdtemp(join(tmpdir(), 'wb-tab-test-'))
-  tempDirs.push(dir)
   const storage = new JsonStorageRepository(dir)
   const state = await storage.loadState()
   const settings: AppSettings = { ...DEFAULT_APP_SETTINGS, ...settingsPatch }
@@ -48,6 +47,7 @@ async function setup(settingsPatch?: Partial<AppSettings>) {
   const workspaces = new Map<string, Workspace>(state.workspaces.map((w) => [w.id, w]))
 
   const kernel = new BrowserKernel()
+  fixtures.push({ dir, kernel })
   const manager = new TabLifecycleManager(storage, {
     getWorkspace: (id) => workspaces.get(id),
     getSettings: () => settings,
@@ -59,8 +59,9 @@ async function setup(settingsPatch?: Partial<AppSettings>) {
 }
 
 afterEach(async () => {
-  while (tempDirs.length > 0) {
-    await rm(tempDirs.pop()!, { recursive: true, force: true })
+  for (const { dir, kernel } of fixtures.splice(0)) {
+    await kernel.stop()
+    await rm(dir, { recursive: true, force: true })
   }
 })
 

@@ -1,6 +1,7 @@
 import { is } from '@electron-toolkit/utils'
 import {
   IPC_CHANNELS,
+  NEW_TAB_URL,
   type AppSettings,
   type BrowserWindowSnapshot,
   type Tab,
@@ -313,7 +314,7 @@ export class BrowserWindowManager
       minWidth: 940,
       minHeight: 620,
       show: false,
-      title: 'Mulspace — 多账号工作区 AI 浏览器',
+      title: 'Mulspace',
     })
 
     const chromeView = new WebContentsView({
@@ -389,7 +390,7 @@ export class BrowserWindowManager
       if (!managed.attachedTabId || managed.overlayOpen) return
       const view = this.tabViews.get(managed.attachedTabId)
       if (view && !view.webContents.isDestroyed()) {
-        view.setVisible(true)
+        this.revealActiveView(managed.attachedTabId, view)
         view.webContents.setBackgroundThrottling(false)
         view.webContents.invalidate()
       }
@@ -489,7 +490,7 @@ export class BrowserWindowManager
         win.lastBoundsByTab.set(win.attachedTabId, { ...win.viewportBounds })
         if (!win.initialBoundsSynced) {
           win.initialBoundsSynced = true
-          view.setVisible(true)
+          this.revealActiveView(win.attachedTabId, view)
           view.webContents.setBackgroundThrottling(false)
           view.webContents.invalidate()
         }
@@ -510,7 +511,7 @@ export class BrowserWindowManager
       view.setVisible(false)
     } else {
       const changed = this.mountViewInWindow(win, win.attachedTabId, view)
-      view.setVisible(true)
+      this.revealActiveView(win.attachedTabId, view)
       view.webContents.setBackgroundThrottling(false)
       if (changed) {
         view.webContents.invalidate()
@@ -641,6 +642,23 @@ export class BrowserWindowManager
     return changed
   }
 
+  private shouldShowTabView(tabId: TabId, view: WebContentsView): boolean {
+    if (this.pendingLoadUrls.has(tabId)) {
+      return this.pendingLoadUrls.get(tabId) !== NEW_TAB_URL
+    }
+    const wcUrl = view.webContents.getURL()
+    if (wcUrl) {
+      return wcUrl !== NEW_TAB_URL
+    }
+    const workspaceId = this.tabIdToWorkspaceId.get(tabId)
+    const tab = workspaceId ? this.tabLifecycle.getTab(workspaceId, tabId) : undefined
+    return Boolean(tab?.url && tab.url !== NEW_TAB_URL)
+  }
+
+  private revealActiveView(tabId: TabId, view: WebContentsView): void {
+    view.setVisible(this.shouldShowTabView(tabId, view))
+  }
+
   attachView(tabId: TabId, windowId: WindowId): void {
     const win = this.windows.get(windowId)
     const view = this.tabViews.get(tabId)
@@ -650,7 +668,7 @@ export class BrowserWindowManager
     win.attachedTabId = tabId
     if (!win.overlayOpen) {
       const changed = this.mountViewInWindow(win, tabId, view)
-      view.setVisible(true)
+      this.revealActiveView(tabId, view)
       view.webContents.setBackgroundThrottling(false)
       if (prevTabId && prevTabId !== tabId) {
         const oldView = this.tabViews.get(prevTabId)
@@ -1150,11 +1168,14 @@ export class BrowserWindowManager
       if (wc.isDestroyed()) return
       const currentUrl = wc.getURL()
       if (currentUrl.startsWith('data:text/html')) return
+      if ([...this.windows.values()].some((win) => win.attachedTabId === tabId && !win.overlayOpen)) {
+        this.revealActiveView(tabId, view)
+      }
       this.pendingCertErrors.delete(tabId)
       this.failedTabUrls.delete(tabId)
       void this.tabLifecycle.updateTabMeta(workspaceId, tabId, {
         url: currentUrl,
-        title: wc.getTitle() || currentUrl,
+        title: currentUrl === NEW_TAB_URL ? '新标签页' : wc.getTitle() || currentUrl,
         canGoBack: wc.navigationHistory.canGoBack(),
         canGoForward: wc.navigationHistory.canGoForward(),
       })
@@ -1166,7 +1187,7 @@ export class BrowserWindowManager
         (w) => !w.baseWindow.isDestroyed() && w.attachedTabId === tabId && !w.overlayOpen,
       )
       if (attachedWin) {
-        view.setVisible(true)
+        this.revealActiveView(tabId, view)
         view.setBounds(attachedWin.viewportBounds)
         wc.setBackgroundThrottling(false)
         wc.invalidate()
@@ -1223,6 +1244,7 @@ export class BrowserWindowManager
     wc.on('did-navigate', syncNav)
     wc.on('did-navigate-in-page', syncNav)
     wc.on('page-title-updated', (_e, title) => {
+      if (wc.getURL() === NEW_TAB_URL) return
       void this.tabLifecycle.updateTabMeta(workspaceId, tabId, { title })
     })
     wc.on('page-favicon-updated', (_e, favicons) => {
@@ -1236,14 +1258,17 @@ export class BrowserWindowManager
     wc.on('did-stop-loading', () => {
       if (wc.isDestroyed()) return
       const currentUrl = wc.getURL()
-      if (currentUrl.startsWith('data:text/html')) {
+      if ([...this.windows.values()].some((win) => win.attachedTabId === tabId && !win.overlayOpen)) {
+        this.revealActiveView(tabId, view)
+      }
+      if (!currentUrl || currentUrl.startsWith('data:text/html')) {
         void this.tabLifecycle.updateTabMeta(workspaceId, tabId, { loading: false })
         return
       }
       void this.tabLifecycle.updateTabMeta(workspaceId, tabId, {
         loading: false,
         url: currentUrl,
-        title: wc.getTitle() || currentUrl,
+        title: currentUrl === NEW_TAB_URL ? '新标签页' : wc.getTitle() || currentUrl,
         canGoBack: wc.navigationHistory.canGoBack(),
         canGoForward: wc.navigationHistory.canGoForward(),
       })

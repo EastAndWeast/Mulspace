@@ -1,5 +1,7 @@
 import type { TabId, WorkspaceId } from './workspace.js'
 
+export const NEW_TAB_URL = 'about:blank#mulspace-new-tab'
+
 export type TabLifecycleState = 'active' | 'frozen' | 'discarded'
 
 export interface TabSnapshot {

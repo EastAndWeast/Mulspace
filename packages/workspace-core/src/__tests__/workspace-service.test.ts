@@ -6,12 +6,12 @@ import { BrowserKernel } from '@wb/kernel'
 import { JsonStorageRepository } from '@wb/storage'
 import { WorkspaceService } from '../workspace-service.js'
 
-const tempDirs: string[] = []
+const fixtures: Array<{ dir: string; storage: JsonStorageRepository }> = []
 
 async function createService() {
   const dir = await mkdtemp(join(tmpdir(), 'wb-ws-test-'))
-  tempDirs.push(dir)
   const storage = new JsonStorageRepository(dir)
+  fixtures.push({ dir, storage })
   const kernel = new BrowserKernel()
   const service = new WorkspaceService(storage)
   kernel.use(service)
@@ -20,8 +20,9 @@ async function createService() {
 }
 
 afterEach(async () => {
-  while (tempDirs.length > 0) {
-    await rm(tempDirs.pop()!, { recursive: true, force: true })
+  for (const { dir, storage } of fixtures.splice(0)) {
+    await storage.flushNow()
+    await rm(dir, { recursive: true, force: true })
   }
 })
 

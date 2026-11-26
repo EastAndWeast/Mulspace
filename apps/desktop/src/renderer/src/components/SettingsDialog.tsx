@@ -1,6 +1,7 @@
 import { useState } from 'react'
 import type { AppSettings, TabMemorySummary, ThemeManifest, ThemeMode, UpdateState } from '@wb/contracts'
-import { Badge, Button, Dialog } from '@wb/ui-kit'
+import { Button, Dialog } from '@wb/ui-kit'
+import { Check } from 'lucide-react'
 import { formatIpcError } from '../utils/format-error.js'
 
 export interface SettingsDialogProps {
@@ -31,10 +32,21 @@ export function SettingsDialog({
   const [themeJsonText, setThemeJsonText] = useState('')
   const [themeMsg, setThemeMsg] = useState<string | null>(null)
 
+  const updateSummary =
+    updateState.status === 'available'
+      ? `发现新版本 v${updateState.latestVersion}`
+      : updateState.status === 'up-to-date'
+        ? '已是最新版本'
+        : updateState.status === 'checking'
+          ? '正在检查…'
+          : updateState.status === 'error'
+            ? `检查失败：${updateState.error ?? '未知错误'}`
+            : '尚未检查'
+
   return (
     <Dialog
       open={open}
-      title="外观主题分离与内存调度设置"
+      title="浏览器设置"
       onClose={onClose}
       footer={
         <Button variant="filled" onClick={onClose}>
@@ -43,48 +55,41 @@ export function SettingsDialog({
       }
     >
       <div className="wb-field-label">
-        <span>主题包（Google Material Design 3 主题分离架构）</span>
-        <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
+        <span>外观与主题</span>
+        <div className="wb-theme-list">
           {themes.map((theme) => {
             const active = settings.themeId === theme.id
             return (
-              <div
-                key={theme.id}
-                onClick={() => void onUpdateSettings({ themeId: theme.id })}
-                style={{
-                  textAlign: 'left',
-                  padding: '10px 12px',
-                  borderRadius: 'var(--wb-sys-radius-sm)',
-                  border: active
-                    ? '2px solid var(--wb-sys-color-primary)'
-                    : '1px solid var(--wb-sys-color-outline-variant)',
-                  backgroundColor: active
-                    ? 'var(--wb-sys-color-primary-container)'
-                    : 'var(--wb-sys-color-surface-container)',
-                  color: active
-                    ? 'var(--wb-sys-color-on-primary-container)'
-                    : 'var(--wb-sys-color-on-surface)',
-                  cursor: 'pointer',
-                }}
-              >
-                <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
-                  <strong style={{ fontSize: 13 }}>{theme.name}</strong>
-                  <div style={{ display: 'flex', gap: 6, alignItems: 'center' }}>
-                    <Badge tone={active ? 'primary' : 'neutral'}>{theme.density}</Badge>
-                    <Button
-                      variant="text"
-                      onClick={async (e) => {
-                        e.stopPropagation()
-                        const json = await window.browserApi.exportThemeJson(theme.id)
-                        setThemeJsonText(json)
-                        setThemeMsg(`已导出「${theme.name}」配置 JSON 到下方文本框`)
-                      }}
-                    >
-                      导出
-                    </Button>
-                  </div>
-                </div>
-                <div style={{ fontSize: 11, marginTop: 4, opacity: 0.85 }}>{theme.description}</div>
+              <div key={theme.id} className="wb-theme-choice">
+                <button
+                  type="button"
+                  className="wb-theme-choice__select"
+                  aria-pressed={active}
+                  onClick={() => void onUpdateSettings({ themeId: theme.id })}
+                >
+                  <span
+                    className="wb-theme-choice__sample"
+                    style={{ color: theme.defaultSeedColor }}
+                    aria-hidden="true"
+                  />
+                  <span className="wb-theme-choice__text">
+                    <strong>{theme.name}</strong>
+                    <span>{theme.description}</span>
+                  </span>
+                  {active ? (
+                    <Check className="wb-theme-choice__check" size={15} strokeWidth={1.9} aria-hidden="true" />
+                  ) : null}
+                </button>
+                <Button
+                  variant="text"
+                  onClick={async () => {
+                    const json = await window.browserApi.exportThemeJson(theme.id)
+                    setThemeJsonText(json)
+                    setThemeMsg(`已导出「${theme.name}」配置`)
+                  }}
+                >
+                  导出
+                </Button>
               </div>
             )
           })}
@@ -92,108 +97,102 @@ export function SettingsDialog({
       </div>
 
       <div className="wb-field-label">
-        <span>导入自定义主题 JSON（可在导出模板基础上修改 Token）</span>
-        <textarea
-          className="wb-input"
-          style={{ height: 68, padding: 8, fontFamily: 'var(--wb-sys-font-mono)' }}
-          value={themeJsonText}
-          onChange={(e) => setThemeJsonText(e.target.value)}
-          placeholder='{"id":"my-theme","name":"My Theme","density":"comfortable","defaultSeedColor":"#10B981"}'
-        />
-        <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
-          <Button
-            variant="tonal"
-            disabled={!themeJsonText.trim()}
-            onClick={async () => {
-              try {
-                await window.browserApi.importThemeJson(themeJsonText)
-                setThemeMsg('主题导入成功！已出现在上方列表。')
-              } catch (err) {
-                setThemeMsg(formatIpcError(err))
-              }
-            }}
-          >
-            导入并注册主题
-          </Button>
-          {themeMsg ? <span style={{ fontSize: 11 }}>{themeMsg}</span> : null}
-        </div>
-      </div>
-
-      <div className="wb-field-label">
         <span>色彩模式</span>
-        <div style={{ display: 'flex', gap: 8 }}>
-          {(['system', 'light', 'dark'] as ThemeMode[]).map((mode) => (
-            <Button
-              key={mode}
-              variant={settings.themeMode === mode ? 'filled' : 'outlined'}
-              onClick={() => void onUpdateSettings({ themeMode: mode })}
-            >
-              {mode === 'system' ? '跟随系统' : mode === 'light' ? '浅色' : '深色'}
-            </Button>
-          ))}
+        <div className="wb-segmented" role="group" aria-label="色彩模式">
+          {(['system', 'light', 'dark'] as ThemeMode[]).map((mode) => {
+            const active = settings.themeMode === mode
+            return (
+              <button
+                key={mode}
+                type="button"
+                className={`wb-segmented__item ${active ? 'wb-segmented__item--active' : ''}`}
+                aria-pressed={active}
+                onClick={() => void onUpdateSettings({ themeMode: mode })}
+              >
+                {mode === 'system' ? '跟随系统' : mode === 'light' ? '浅色' : '深色'}
+              </button>
+            )
+          })}
         </div>
       </div>
 
-      <label
-        style={{
-          display: 'flex',
-          alignItems: 'center',
-          gap: 8,
-          fontSize: 12,
-          color: 'var(--wb-sys-color-on-surface)',
-          cursor: 'pointer',
-        }}
-      >
+      <label className="wb-check-row">
         <input
           type="checkbox"
           checked={settings.followWorkspaceColor}
           onChange={(e) => void onUpdateSettings({ followWorkspaceColor: e.target.checked })}
         />
-        <span>切换工作区时动态切换 Material 3 强调色（强烈推荐用于防串号）</span>
+        <span>界面强调色跟随当前工作区</span>
       </label>
 
-      <div
-        style={{
-          padding: 12,
-          borderRadius: 'var(--wb-sys-radius-md)',
-          backgroundColor: 'var(--wb-sys-color-surface-container)',
-          border: '1px solid var(--wb-sys-color-outline-variant)',
-          display: 'flex',
-          flexDirection: 'column',
-          gap: 10,
-        }}
-      >
-        <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
-          <strong style={{ fontSize: 13 }}>三层标签页内存回收状态</strong>
+      <details className="wb-details">
+        <summary>导入自定义主题 JSON</summary>
+        <div className="wb-details__body">
+          <textarea
+            className="wb-input wb-details__textarea"
+            value={themeJsonText}
+            onChange={(e) => setThemeJsonText(e.target.value)}
+            placeholder='{"id":"my-theme","name":"My Theme","density":"comfortable","defaultSeedColor":"#147A6B"}'
+          />
+          <div className="wb-details__actions">
+            <Button
+              variant="tonal"
+              disabled={!themeJsonText.trim()}
+              onClick={async () => {
+                try {
+                  await window.browserApi.importThemeJson(themeJsonText)
+                  setThemeMsg('主题已导入，可在上方列表选用。')
+                } catch (err) {
+                  setThemeMsg(formatIpcError(err))
+                }
+              }}
+            >
+              导入并注册主题
+            </Button>
+            {themeMsg ? <span className="wb-details__msg">{themeMsg}</span> : null}
+          </div>
+        </div>
+      </details>
+
+      <div className="wb-dialog-card">
+        <div className="wb-dialog-card__head">
+          <div>
+            <div className="wb-dialog-card__title">标签页内存调度</div>
+            <div className="wb-dialog-card__sub">自动休眠或释放闲置标签以控制内存占用</div>
+          </div>
           <Button variant="tonal" onClick={() => void onSweepMemory()}>
             立即休眠后台标签
           </Button>
         </div>
-        <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap' }}>
-          <Badge tone="primary">活跃 Active: {memorySummary.activeTabs}</Badge>
-          <Badge>冻结 Frozen: {memorySummary.frozenTabs}</Badge>
-          <Badge>已释放 Discarded: {memorySummary.discardedTabs}</Badge>
-          <Badge>总标签: {memorySummary.totalTabs}</Badge>
+        <div className="wb-stat-strip">
+          <div className="wb-stat-cell">
+            <strong>{memorySummary.activeTabs}</strong>
+            <span>活跃</span>
+          </div>
+          <div className="wb-stat-cell">
+            <strong>{memorySummary.frozenTabs}</strong>
+            <span>休眠</span>
+          </div>
+          <div className="wb-stat-cell">
+            <strong>{memorySummary.discardedTabs}</strong>
+            <span>已释放</span>
+          </div>
+          <div className="wb-stat-cell">
+            <strong>{memorySummary.totalTabs}</strong>
+            <span>总标签</span>
+          </div>
         </div>
       </div>
 
-      {/* Auto-Update Section */}
-      <div
-        style={{
-          padding: 12,
-          borderRadius: 'var(--wb-sys-radius-md)',
-          backgroundColor: 'var(--wb-sys-color-surface-container)',
-          border: '1px solid var(--wb-sys-color-outline-variant)',
-          display: 'flex',
-          flexDirection: 'column',
-          gap: 10,
-        }}
-      >
-        <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 8 }}>
+      <div className="wb-dialog-card">
+        <div className="wb-dialog-card__head">
           <div>
-            <strong style={{ fontSize: 13 }}>自动更新检测（GitHub Releases）</strong>
-            <div style={{ fontSize: 11, color: 'var(--wb-sys-color-on-surface-variant)' }}>
-              当前版本 v{updateState.currentVersion} · 仓库 {updateState.repoSlug}
+            <div className="wb-dialog-card__title">版本更新</div>
+            <div className="wb-dialog-card__sub">
+              v{updateState.currentVersion} · {updateSummary}
+              {updateState.checkedAt
+                ? ` · ${new Date(updateState.checkedAt).toLocaleTimeString()}`
+                : ''}
             </div>
           </div>
           <Button
@@ -201,71 +200,30 @@ export function SettingsDialog({
             disabled={updateState.status === 'checking'}
             onClick={() => void onCheckForUpdates()}
           >
-            {updateState.status === 'checking' ? '正在检测…' : '立即检查更新'}
+            {updateState.status === 'checking' ? '检查中…' : '检查更新'}
           </Button>
         </div>
 
-        <label
-          style={{
-            display: 'flex',
-            alignItems: 'center',
-            gap: 8,
-            fontSize: 12,
-            color: 'var(--wb-sys-color-on-surface)',
-            cursor: 'pointer',
-          }}
-        >
+        <label className="wb-check-row">
           <input
             type="checkbox"
             checked={settings.autoCheckUpdates}
             onChange={(e) => void onUpdateSettings({ autoCheckUpdates: e.target.checked })}
           />
-          <span>启动时及后台定期自动检测新版本</span>
+          <span>启动时及后台自动检查更新</span>
         </label>
 
-        <div style={{ display: 'flex', alignItems: 'center', gap: 8, flexWrap: 'wrap' }}>
-          <Badge tone={updateState.status === 'available' ? 'primary' : 'neutral'}>
-            {updateState.status === 'available'
-              ? `发现新版本 v${updateState.latestVersion}`
-              : updateState.status === 'up-to-date'
-                ? '当前已是最新版本'
-                : updateState.status === 'checking'
-                  ? '正在连接 GitHub Releases…'
-                  : updateState.status === 'error'
-                    ? `检测失败：${updateState.error ?? '未知错误'}`
-                    : '尚未检测'}
-          </Badge>
-          {updateState.checkedAt ? (
-            <span style={{ fontSize: 11, color: 'var(--wb-sys-color-on-surface-variant)' }}>
-              上次检测：{new Date(updateState.checkedAt).toLocaleTimeString()}
-            </span>
-          ) : null}
-        </div>
-
         {updateState.status === 'available' ? (
-          <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
+          <>
             {updateState.releaseNotes ? (
-              <pre
-                style={{
-                  margin: 0,
-                  padding: 8,
-                  maxHeight: 100,
-                  overflowY: 'auto',
-                  fontSize: 11,
-                  borderRadius: 'var(--wb-sys-radius-xs)',
-                  backgroundColor: 'var(--wb-sys-color-surface-container-lowest)',
-                  whiteSpace: 'pre-wrap',
-                }}
-              >
-                {updateState.releaseNotes}
-              </pre>
+              <pre className="wb-update-notes">{updateState.releaseNotes}</pre>
             ) : null}
             <Button variant="filled" onClick={() => void onOpenUpdateDownload()}>
               {updateState.matchedAsset
                 ? `下载新版本 (${updateState.matchedAsset.name})`
-                : '前往 GitHub Releases 下载新版本'}
+                : '前往 Releases 下载新版本'}
             </Button>
-          </div>
+          </>
         ) : null}
       </div>
     </Dialog>

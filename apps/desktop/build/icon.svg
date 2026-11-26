@@ -1,6 +1,19 @@
 <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512">
-  <rect x="30" y="30" width="452" height="452" rx="102" fill="#1E294E"/>
-  <rect x="102" y="112" width="225" height="225" rx="46" fill="#3B82F6"/>
-  <rect x="154" y="154" width="225" height="225" rx="46" fill="#8B5CF6"/>
-  <rect x="195" y="195" width="215" height="215" rx="46" fill="#10B981"/>
+  <defs>
+    <linearGradient id="ms-tile" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0%" stop-color="#1E2433"/>
+      <stop offset="100%" stop-color="#11151F"/>
+    </linearGradient>
+    <linearGradient id="ms-blue" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0%" stop-color="#5CA0FF"/>
+      <stop offset="100%" stop-color="#2563EB"/>
+    </linearGradient>
+    <linearGradient id="ms-white" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0%" stop-color="#FAFBF9"/>
+      <stop offset="100%" stop-color="#E6EAF2"/>
+    </linearGradient>
+  </defs>
+  <rect x="24" y="24" width="464" height="464" rx="112" fill="url(#ms-tile)" stroke="#343E57" stroke-width="3"/>
+  <path d="M 115.0 374.0 Q 112.0 374.0 112.0 371.0 L 112.0 141.0 Q 112.0 138.0 115.0 138.0 L 173.0 138.0 Q 176.0 138.0 178.1 140.1 L 234.9 196.9 Q 237.0 199.0 234.9 201.1 L 196.1 239.9 Q 194.0 242.0 191.9 239.9 L 178.1 226.1 Q 176.0 224.0 176.0 227.0 L 176.0 371.0 Q 176.0 374.0 173.0 374.0 Z" fill="url(#ms-blue)"/>
+  <path d="M 215.1 263.1 Q 213.0 261.0 215.1 258.9 L 333.9 140.1 Q 336.0 138.0 339.0 138.0 L 397.0 138.0 Q 400.0 138.0 400.0 141.0 L 400.0 371.0 Q 400.0 374.0 397.0 374.0 L 339.0 374.0 Q 336.0 374.0 336.0 371.0 L 336.0 227.0 Q 336.0 224.0 333.9 226.1 L 258.1 301.9 Q 256.0 304.0 253.9 301.9 Z" fill="url(#ms-white)"/>
 </svg>

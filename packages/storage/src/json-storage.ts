@@ -1,6 +1,7 @@
 import { randomUUID } from 'node:crypto'
 import { chmod, mkdir, readFile, rename, writeFile } from 'node:fs/promises'
 import { dirname, join } from 'node:path'
+import { NEW_TAB_URL } from '@wb/contracts'
 import type {
   AppSettings,
   InstalledExtension,
@@ -61,7 +62,7 @@ function createInitialSeedState(now = Date.now()): PersistedBrowserState {
     id: 'ws_default_1',
     name: '默认空间',
     icon: '🧭',
-    seedColor: '#3B82F6',
+    seedColor: '#1F5AE0',
     partition: 'persist:ws-ws_default_1',
     isolation: {
       webrtcPolicy: 'disable_non_proxied_udp',
@@ -86,7 +87,7 @@ function createInitialSeedState(now = Date.now()): PersistedBrowserState {
     id: 'ws_account_2',
     name: '账号空间 2',
     icon: '🔐',
-    seedColor: '#8B5CF6',
+    seedColor: '#147A6B',
     partition: 'persist:ws-ws_account_2',
     isolation: {
       webrtcPolicy: 'disable_non_proxied_udp',
@@ -115,8 +116,8 @@ function createInitialSeedState(now = Date.now()): PersistedBrowserState {
         {
           id: 'tab_seed_1',
           workspaceId: ws1.id,
-          url: 'https://www.bing.com',
-          title: 'Bing',
+          url: NEW_TAB_URL,
+          title: '新标签页',
           state: 'discarded',
           pinned: false,
           muted: false,
@@ -133,8 +134,8 @@ function createInitialSeedState(now = Date.now()): PersistedBrowserState {
         {
           id: 'tab_seed_2',
           workspaceId: ws2.id,
-          url: 'https://www.bing.com',
-          title: 'Bing (独立账号环境)',
+          url: NEW_TAB_URL,
+          title: '新标签页',
           state: 'discarded',
           pinned: false,
           muted: false,

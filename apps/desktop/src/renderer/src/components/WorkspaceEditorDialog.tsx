@@ -1,9 +1,8 @@
 import { useEffect, useState } from 'react'
 import type { CreateWorkspaceInput, WebRtcPolicy, Workspace } from '@wb/contracts'
 import { Button, Dialog, Input } from '@wb/ui-kit'
-
-const EMOJI_PRESETS = ['🧭', '🔐', '🛒', '🐦', '💼', '🧪', '🤖', '🌐', '🎬', '📊']
-const COLOR_PRESETS = ['#3B82F6', '#8B5CF6', '#10B981', '#F59E0B', '#EC4899', '#EF4444', '#06B6D4']
+import { Check } from 'lucide-react'
+import { WorkspaceGlyph, workspaceColors, workspaceGlyphs } from './WorkspaceGlyph.js'
 
 export interface WorkspaceEditorDialogProps {
   open: boolean
@@ -26,7 +25,7 @@ export function WorkspaceEditorDialog({
 }: WorkspaceEditorDialogProps) {
   const [name, setName] = useState('')
   const [icon, setIcon] = useState('🌐')
-  const [seedColor, setSeedColor] = useState('#3B82F6')
+  const [seedColor, setSeedColor] = useState('#1F5AE0')
   const [userAgent, setUserAgent] = useState('')
   const [webrtcPolicy, setWebrtcPolicy] = useState<WebRtcPolicy>('disable_non_proxied_udp')
   const [busy, setBusy] = useState(false)
@@ -42,7 +41,7 @@ export function WorkspaceEditorDialog({
     } else {
       setName('')
       setIcon('🔐')
-      setSeedColor('#8B5CF6')
+      setSeedColor('#147A6B')
       setUserAgent('')
       setWebrtcPolicy('disable_non_proxied_udp')
     }
@@ -96,11 +95,7 @@ export function WorkspaceEditorDialog({
               删除工作区
             </Button>
           ) : workspace ? (
-            <span
-              style={{ fontSize: 11, color: 'var(--wb-sys-color-on-surface-variant)', marginRight: 'auto' }}
-            >
-              至少需保留 1 个工作区
-            </span>
+            <span className="wb-editor-note">至少保留 1 个工作区</span>
           ) : null}
           <Button variant="text" onClick={onClose}>
             取消
@@ -112,80 +107,71 @@ export function WorkspaceEditorDialog({
       }
     >
       <label className="wb-field-label">
-        工作区名称（例如：小红书-主号 / GitHub-工作）
+        工作区名称
         <Input
           value={name}
           onChange={(e) => setName(e.target.value)}
-          placeholder="输入工作区名称..."
+          placeholder="例如：个人主号 / 测试环境"
           autoFocus
         />
       </label>
 
       <div className="wb-field-label">
-        <span>图标标识</span>
+        <span>图标</span>
         <div className="wb-color-swatches">
-          {EMOJI_PRESETS.map((emoji) => (
+          {workspaceGlyphs.map((glyph) => (
             <button
-              key={emoji}
+              key={glyph.value}
               type="button"
-              onClick={() => setIcon(emoji)}
-              style={{
-                width: 32,
-                height: 32,
-                borderRadius: 'var(--wb-sys-radius-sm)',
-                border:
-                  icon === emoji
-                    ? '2px solid var(--wb-sys-color-primary)'
-                    : '1px solid var(--wb-sys-color-outline-variant)',
-                backgroundColor:
-                  icon === emoji
-                    ? 'var(--wb-sys-color-primary-container)'
-                    : 'var(--wb-sys-color-surface-container)',
-                fontSize: 16,
-                cursor: 'pointer',
-              }}
+              className="wb-workspace-glyph"
+              onClick={() => setIcon(glyph.value)}
+              aria-label={glyph.label}
+              aria-pressed={icon === glyph.value}
+              title={glyph.label}
             >
-              {emoji}
+              <WorkspaceGlyph value={glyph.value} size={16} />
             </button>
           ))}
+          {!workspaceGlyphs.some((glyph) => glyph.value === icon) ? (
+            <button type="button" className="wb-workspace-glyph" aria-pressed="true" aria-label="当前自定义图标">
+              <WorkspaceGlyph value={icon} size={16} />
+            </button>
+          ) : null}
         </div>
       </div>
 
       <div className="wb-field-label">
-        <span>Material 3 动态主题强调色（防串号视觉锚点）</span>
+        <span>强调色</span>
         <div className="wb-color-swatches">
-          {COLOR_PRESETS.map((hex) => (
-            <button
-              key={hex}
-              type="button"
-              className={`wb-swatch ${seedColor === hex ? 'wb-swatch--selected' : ''}`}
-              style={{ backgroundColor: hex }}
-              onClick={() => setSeedColor(hex)}
-              aria-label={`选择颜色 ${hex}`}
-            />
-          ))}
+          {(workspaceColors.includes(seedColor) ? workspaceColors : [...workspaceColors, seedColor]).map((hex) => {
+            const selected = seedColor === hex
+            return (
+              <button
+                key={hex}
+                type="button"
+                className={`wb-swatch ${selected ? 'wb-swatch--selected' : ''}`}
+                style={{ backgroundColor: hex }}
+                onClick={() => setSeedColor(hex)}
+                aria-pressed={selected}
+                aria-label={`选择颜色 ${hex}`}
+              >
+                {selected ? <Check size={13} strokeWidth={2.4} aria-hidden="true" /> : null}
+              </button>
+            )
+          })}
         </div>
       </div>
 
       <label className="wb-field-label">
-        自定义 User-Agent（可选，留空使用默认 Chromium UA）
+        自定义 User-Agent（可选）
         <Input
           value={userAgent}
           onChange={(e) => setUserAgent(e.target.value)}
-          placeholder="Mozilla/5.0 ..."
+          placeholder="留空则使用默认浏览器标识"
         />
       </label>
 
-      <label
-        style={{
-          display: 'flex',
-          alignItems: 'center',
-          gap: 8,
-          fontSize: 12,
-          color: 'var(--wb-sys-color-on-surface)',
-          cursor: 'pointer',
-        }}
-      >
+      <label className="wb-check-row">
         <input
           type="checkbox"
           checked={webrtcPolicy === 'disable_non_proxied_udp'}
@@ -193,12 +179,13 @@ export function WorkspaceEditorDialog({
             setWebrtcPolicy(e.target.checked ? 'disable_non_proxied_udp' : 'default')
           }
         />
-        <span>启用 WebRTC 防真实 IP 泄漏（推荐，Phase 2 配合代理节点生效）</span>
+        <span>阻止 WebRTC 泄露真实 IP</span>
       </label>
 
       {workspace ? (
-        <div style={{ fontSize: 11, color: 'var(--wb-sys-color-on-surface-variant)' }}>
-          存储隔离分区：<code style={{ fontFamily: 'var(--wb-sys-font-mono)' }}>{workspace.partition}</code>
+        <div className="wb-editor-partition">
+          <span>存储隔离分区</span>
+          <code>{workspace.partition}</code>
         </div>
       ) : null}
     </Dialog>

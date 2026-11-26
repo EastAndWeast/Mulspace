@@ -4,15 +4,11 @@ export interface IconButtonProps extends ButtonHTMLAttributes<HTMLButtonElement>
   active?: boolean
 }
 
-export function IconButton({ active = false, className = '', style, ...rest }: IconButtonProps) {
+export function IconButton({ active, className = '', ...rest }: IconButtonProps) {
   return (
     <button
       className={`wb-icon-btn ${className}`.trim()}
-      style={{
-        backgroundColor: active ? 'var(--wb-sys-color-primary-container)' : undefined,
-        color: active ? 'var(--wb-sys-color-on-primary-container)' : undefined,
-        ...style,
-      }}
+      aria-pressed={active}
       {...rest}
     />
   )

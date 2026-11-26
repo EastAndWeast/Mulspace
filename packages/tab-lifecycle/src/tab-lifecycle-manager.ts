@@ -1,6 +1,7 @@
 import { randomUUID } from 'node:crypto'
 import {
   createServiceToken,
+  NEW_TAB_URL,
   type AppSettings,
   type CreateTabInput,
   type IKernelContext,
@@ -127,7 +128,7 @@ export class TabLifecycleManager implements IKernelModule {
     const tab: Tab = {
       id: `tab_${randomUUID().slice(0, 8)}`,
       workspaceId: input.workspaceId,
-      url: input.url ?? 'https://www.bing.com',
+      url: input.url ?? NEW_TAB_URL,
       title: input.title ?? '新标签页',
       state: 'discarded',
       pinned: input.pinned ?? false,
