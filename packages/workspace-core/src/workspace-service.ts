@@ -75,9 +75,12 @@ export class WorkspaceService implements IKernelModule {
       throw new Error(`Workspace not found: ${workspaceId}`)
     }
     this.windowActiveWorkspace.set(windowId, workspaceId)
+    const changed = this.lastActiveWorkspaceId !== workspaceId
     this.lastActiveWorkspaceId = workspaceId
-    await this.storage.saveLastActiveWorkspaceId(workspaceId)
     this.ctx.events.emit('workspace:switched', { windowId, workspaceId })
+    if (changed) {
+      void this.storage.saveLastActiveWorkspaceId(workspaceId).catch(() => undefined)
+    }
     return structuredClone(ws)
   }
 

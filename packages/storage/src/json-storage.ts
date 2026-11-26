@@ -23,7 +23,7 @@ export function createDefaultAppSettings(): AppSettings {
     followWorkspaceColor: true,
     freezeAfterMs: 5 * 60 * 1000,
     discardAfterMs: 20 * 60 * 1000,
-    maxLiveTabs: 12,
+    maxLiveTabs: 16,
     autoCheckUpdates: true,
     mcpHost: {
       enabled: true,
@@ -169,7 +169,9 @@ export interface StorageSecretCipher {
 export class JsonStorageRepository implements IStorageRepository {
   private readonly filePath: string
   private state: PersistedBrowserState | null = null
-  private writeChain: Promise<void> = Promise.resolve()
+  private writeInFlight: Promise<void> | null = null
+  private pendingFlushResolvers: Array<{ resolve: () => void; reject: (err: unknown) => void }> = []
+  private readonly encryptedSecretCache = new Map<string, string>()
 
   constructor(
     dataDir: string,
@@ -181,8 +183,12 @@ export class JsonStorageRepository implements IStorageRepository {
 
   private encryptSecret(plain: string): string {
     if (!this.cipher || !plain || plain.startsWith(ENC_PREFIX)) return plain
+    const cached = this.encryptedSecretCache.get(plain)
+    if (cached) return cached
     try {
-      return `${ENC_PREFIX}${this.cipher.encrypt(plain)}`
+      const encrypted = `${ENC_PREFIX}${this.cipher.encrypt(plain)}`
+      this.encryptedSecretCache.set(plain, encrypted)
+      return encrypted
     } catch {
       return plain
     }
@@ -368,16 +374,40 @@ export class JsonStorageRepository implements IStorageRepository {
     return this.state!
   }
 
-  private flush(snapshotSource: PersistedBrowserState): Promise<void> {
-    const diskState = this.transformSecretsForDisk(snapshotSource)
-    const payload = JSON.stringify(diskState, null, 2)
-    this.writeChain = this.writeChain.then(async () => {
-      await mkdir(dirname(this.filePath), { recursive: true, mode: 0o700 })
-      const tmpPath = `${this.filePath}.${process.pid}.${Date.now()}.tmp`
-      await writeFile(tmpPath, payload, { encoding: 'utf8', mode: 0o600 })
-      await chmod(tmpPath, 0o600).catch(() => undefined)
-      await rename(tmpPath, this.filePath)
+  async flushNow(): Promise<void> {
+    if (this.writeInFlight) {
+      await this.writeInFlight
+    }
+  }
+
+  private flush(_snapshotSource: PersistedBrowserState): Promise<void> {
+    return new Promise<void>((resolve, reject) => {
+      this.pendingFlushResolvers.push({ resolve, reject })
+      if (!this.writeInFlight) {
+        this.writeInFlight = this.drainFlushLoop()
+      }
     })
-    return this.writeChain
+  }
+
+  private async drainFlushLoop(): Promise<void> {
+    try {
+      while (this.pendingFlushResolvers.length > 0 && this.state) {
+        const batch = this.pendingFlushResolvers.splice(0, this.pendingFlushResolvers.length)
+        try {
+          const diskState = this.transformSecretsForDisk(this.state)
+          const payload = JSON.stringify(diskState, null, 2)
+          await mkdir(dirname(this.filePath), { recursive: true, mode: 0o700 })
+          const tmpPath = `${this.filePath}.${process.pid}.${Date.now()}.tmp`
+          await writeFile(tmpPath, payload, { encoding: 'utf8', mode: 0o600 })
+          await chmod(tmpPath, 0o600).catch(() => undefined)
+          await rename(tmpPath, this.filePath)
+          for (const { resolve } of batch) resolve()
+        } catch (err) {
+          for (const { reject } of batch) reject(err)
+        }
+      }
+    } finally {
+      this.writeInFlight = null
+    }
   }
 }

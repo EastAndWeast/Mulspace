@@ -200,7 +200,16 @@ export function App() {
                     className={`wb-rail__item ${isActive ? 'wb-rail__item--active' : ''}`}
                     style={{ borderColor: isActive ? ws.seedColor : undefined }}
                     title={`${ws.name} (${tabCount} 个标签) — 右键编辑`}
-                    onClick={() => void window.browserApi.switchWorkspace(ws.id)}
+                    onMouseDown={(e) => {
+                      if (e.button === 0 && !isActive) {
+                        void window.browserApi.switchWorkspace(ws.id)
+                      }
+                    }}
+                    onClick={() => {
+                      if (!isActive) {
+                        void window.browserApi.switchWorkspace(ws.id)
+                      }
+                    }}
                     onContextMenu={(e) => {
                       e.preventDefault()
                       setEditingWorkspace(ws)
@@ -270,7 +279,16 @@ export function App() {
                   role="tab"
                   aria-selected={isTabActive}
                   className={`wb-tab ${isTabActive ? 'wb-tab--active' : ''}`}
-                  onClick={() => void window.browserApi.activateTab(activeWorkspace.id, tab.id)}
+                  onMouseDown={(e) => {
+                    if (e.button === 0 && !isTabActive) {
+                      void window.browserApi.activateTab(activeWorkspace.id, tab.id)
+                    }
+                  }}
+                  onClick={() => {
+                    if (!isTabActive) {
+                      void window.browserApi.activateTab(activeWorkspace.id, tab.id)
+                    }
+                  }}
                   onContextMenu={(e) => {
                     e.preventDefault()
                     void window.browserApi.showTabContextMenu(activeWorkspace.id, tab.id)
@@ -283,6 +301,7 @@ export function App() {
                       type="button"
                       className="wb-tab__close"
                       title={tab.muted ? '取消静音' : '静音此标签页'}
+                      onMouseDown={(e) => e.stopPropagation()}
                       onClick={(e) => {
                         e.stopPropagation()
                         void window.browserApi.toggleMuteTab(activeWorkspace.id, tab.id)
@@ -309,6 +328,7 @@ export function App() {
                     type="button"
                     className="wb-tab__close"
                     title="关闭标签"
+                    onMouseDown={(e) => e.stopPropagation()}
                     onClick={(e) => {
                       e.stopPropagation()
                       void window.browserApi.closeTab(activeWorkspace.id, tab.id)

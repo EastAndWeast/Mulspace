@@ -88,4 +88,57 @@ describe('JsonStorageRepository', () => {
     const reloaded = await new JsonStorageRepository(dir, 'browser-state.json', mockCipher).loadState()
     expect(reloaded.workspaces[0]?.proxy.customUrl).toBe('http://user_a:secret_pw@127.0.0.1:8888')
   })
+
+  it('caches secret cipher encryption and coalesces rapid concurrent flushes', async () => {
+    const dir = await createTempDir()
+    let encryptCalls = 0
+    const countingCipher: StorageSecretCipher = {
+      encrypt: (plain) => {
+        encryptCalls++
+        return Buffer.from(plain, 'utf8').toString('base64')
+      },
+      decrypt: (ct) => Buffer.from(ct, 'base64').toString('utf8'),
+    }
+    const repo = new JsonStorageRepository(dir, 'browser-state.json', countingCipher)
+    const state = await repo.loadState()
+    const ws = state.workspaces[0]!
+
+    // Concurrent bursts of saves with identical secrets
+    await Promise.all([
+      repo.saveWorkspace({
+        ...ws,
+        proxy: { mode: 'custom', customUrl: 'http://u:p@127.0.0.1:8080' },
+      }),
+      repo.saveLastActiveWorkspaceId(ws.id),
+      repo.saveTabsForWorkspace(ws.id, [
+        {
+          id: 'tab_burst',
+          workspaceId: ws.id,
+          url: 'https://example.com',
+          title: 'Burst',
+          state: 'active',
+          pinned: false,
+          muted: false,
+          audible: false,
+          loading: false,
+          canGoBack: false,
+          canGoForward: false,
+          aiBusy: false,
+          lockedFromDiscard: false,
+          lastActiveAt: Date.now(),
+        },
+      ]),
+    ])
+    await repo.flushNow()
+    const callsAfterFirstBurst = encryptCalls
+
+    // Trigger more flushes without changing any secret
+    await repo.saveLastActiveWorkspaceId(state.workspaces[1]!.id)
+    await repo.saveLastActiveWorkspaceId(ws.id)
+    expect(encryptCalls).toBe(callsAfterFirstBurst)
+
+    const verifyRepo = new JsonStorageRepository(dir, 'browser-state.json', countingCipher)
+    const reloaded = await verifyRepo.loadState()
+    expect(reloaded.tabsByWorkspace[ws.id]?.[0]?.id).toBe('tab_burst')
+  })
 })

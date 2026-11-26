@@ -68,6 +68,8 @@ interface ManagedWindow {
   chromeView: WebContentsView
   viewportBounds: ViewportBounds
   attachedTabId: TabId | null
+  mountedTabIds: Set<TabId>
+  lastBoundsByTab: Map<TabId, ViewportBounds>
   overlayOpen: boolean
   initialBoundsSynced: boolean
 }
@@ -106,6 +108,8 @@ export class BrowserWindowManager
   private readonly grantedPermissions = new Map<WorkspaceId, Set<string>>()
   private readonly deniedPermissions = new Map<WorkspaceId, Set<string>>()
   private readonly pendingPermissionPrompts = new Map<string, Promise<boolean>>()
+  private readonly lastAppliedIsolation = new Map<WorkspaceId, string>()
+  private readonly pendingSnapshotWindows = new Set<WindowId>()
 
   private windowSeq = 0
   private aiMessageSeq = 0
@@ -142,15 +146,19 @@ export class BrowserWindowManager
 
     this.kernel.events.on('workspace:created', broadcastAll)
     this.kernel.events.on('workspace:updated', ({ workspace }) => {
-      const ses = session.fromPartition(workspace.partition, { cache: true })
       const ua = workspace.isolation.userAgent?.trim() || this.getDefaultUserAgent()
-      ses.setUserAgent(ua)
-      for (const [tabId, wsId] of this.tabIdToWorkspaceId.entries()) {
-        if (wsId !== workspace.id) continue
-        const view = this.tabViews.get(tabId)
-        if (view && !view.webContents.isDestroyed()) {
-          view.webContents.setUserAgent(ua)
-          view.webContents.setWebRTCIPHandlingPolicy(workspace.isolation.webrtcPolicy)
+      const isolationSig = `${ua}|${workspace.isolation.webrtcPolicy}`
+      if (this.lastAppliedIsolation.get(workspace.id) !== isolationSig) {
+        this.lastAppliedIsolation.set(workspace.id, isolationSig)
+        const ses = session.fromPartition(workspace.partition, { cache: true })
+        ses.setUserAgent(ua)
+        for (const [tabId, wsId] of this.tabIdToWorkspaceId.entries()) {
+          if (wsId !== workspace.id) continue
+          const view = this.tabViews.get(tabId)
+          if (view && !view.webContents.isDestroyed()) {
+            view.webContents.setUserAgent(ua)
+            view.webContents.setWebRTCIPHandlingPolicy(workspace.isolation.webrtcPolicy)
+          }
         }
       }
       broadcastAll()
@@ -159,6 +167,7 @@ export class BrowserWindowManager
       this.allowedInsecureCertHosts.delete(workspaceId)
       this.grantedPermissions.delete(workspaceId)
       this.deniedPermissions.delete(workspaceId)
+      this.lastAppliedIsolation.delete(workspaceId)
 
       const resolvedPartition = partition ?? `persist:ws-${workspaceId}`
       this.proxyAuthByPartition.delete(resolvedPartition)
@@ -329,6 +338,8 @@ export class BrowserWindowManager
         height: Math.max(200, (initH ?? 880) - 88),
       },
       attachedTabId: null,
+      mountedTabIds: new Set<TabId>(),
+      lastBoundsByTab: new Map<TabId, ViewportBounds>(),
       overlayOpen: false,
       initialBoundsSynced: false,
     }
@@ -386,6 +397,19 @@ export class BrowserWindowManager
     baseWindow.on('closed', () => {
       const attachedTabId = managed.attachedTabId
       const attachedTabWsId = attachedTabId ? this.tabIdToWorkspaceId.get(attachedTabId) : undefined
+      for (const mountedTabId of [...managed.mountedTabIds]) {
+        const v = this.tabViews.get(mountedTabId)
+        if (v) {
+          try {
+            baseWindow.contentView.removeChildView(v)
+          } catch {
+            // Ignore
+          }
+        }
+      }
+      managed.mountedTabIds.clear()
+      managed.lastBoundsByTab.clear()
+      this.pendingSnapshotWindows.delete(windowId)
       this.chromeWebContentsToWindowId.delete(chromeView.webContents.id)
       this.windows.delete(windowId)
       this.workspaceService.unbindWindow(windowId)
@@ -441,9 +465,9 @@ export class BrowserWindowManager
     const currentWsId = this.workspaceService.getActiveWorkspaceForWindow(windowId)
     if (currentWsId === workspaceId) return
 
-    await this.tabLifecycle.freezeWorkspaceViews(currentWsId, windowId)
     await this.workspaceService.bindWindowToWorkspace(windowId, workspaceId)
     await this.ensureActiveTabForWorkspace(workspaceId, windowId)
+    await this.tabLifecycle.freezeWorkspaceViews(currentWsId, windowId)
     this.pushSnapshotToWindow(windowId)
   }
 
@@ -462,6 +486,7 @@ export class BrowserWindowManager
       const view = this.tabViews.get(win.attachedTabId)
       if (view) {
         view.setBounds(win.viewportBounds)
+        win.lastBoundsByTab.set(win.attachedTabId, { ...win.viewportBounds })
         if (!win.initialBoundsSynced) {
           win.initialBoundsSynced = true
           view.setVisible(true)
@@ -482,17 +507,14 @@ export class BrowserWindowManager
     if (!view) return
 
     if (open) {
-      try {
-        win.baseWindow.contentView.removeChildView(view)
-      } catch {
-        // Ignore
-      }
+      view.setVisible(false)
     } else {
+      const changed = this.mountViewInWindow(win, win.attachedTabId, view)
       view.setVisible(true)
-      win.baseWindow.contentView.addChildView(view)
-      view.setBounds(win.viewportBounds)
       view.webContents.setBackgroundThrottling(false)
-      view.webContents.invalidate()
+      if (changed) {
+        view.webContents.invalidate()
+      }
     }
   }
 
@@ -536,9 +558,14 @@ export class BrowserWindowManager
   }
 
   pushSnapshotToWindow(windowId: WindowId): void {
-    const win = this.windows.get(windowId)
-    if (!win || win.chromeView.webContents.isDestroyed()) return
-    win.chromeView.webContents.send(IPC_CHANNELS.STATE_UPDATED, this.getSnapshot(windowId))
+    if (this.pendingSnapshotWindows.has(windowId)) return
+    this.pendingSnapshotWindows.add(windowId)
+    queueMicrotask(() => {
+      this.pendingSnapshotWindows.delete(windowId)
+      const win = this.windows.get(windowId)
+      if (!win || win.chromeView.webContents.isDestroyed()) return
+      win.chromeView.webContents.send(IPC_CHANNELS.STATE_UPDATED, this.getSnapshot(windowId))
+    })
   }
 
   // ---- ITabViewAdapter Implementation ----
@@ -577,29 +604,61 @@ export class BrowserWindowManager
     this.pendingLoadUrls.set(tab.id, normalizeNavigationInput(targetUrl))
   }
 
+  private mountViewInWindow(win: ManagedWindow, tabId: TabId, view: WebContentsView): boolean {
+    let changed = false
+    for (const [otherWinId, otherWin] of this.windows.entries()) {
+      if (otherWinId !== win.id && otherWin.mountedTabIds.has(tabId)) {
+        try {
+          otherWin.baseWindow.contentView.removeChildView(view)
+        } catch {
+          // Ignore
+        }
+        otherWin.mountedTabIds.delete(tabId)
+        otherWin.lastBoundsByTab.delete(tabId)
+        if (otherWin.attachedTabId === tabId) {
+          otherWin.attachedTabId = null
+        }
+      }
+    }
+    if (!win.mountedTabIds.has(tabId)) {
+      win.baseWindow.contentView.addChildView(view)
+      win.mountedTabIds.add(tabId)
+      changed = true
+    }
+    const prevBounds = win.lastBoundsByTab.get(tabId)
+    const cur = win.viewportBounds
+    if (
+      !prevBounds ||
+      prevBounds.x !== cur.x ||
+      prevBounds.y !== cur.y ||
+      prevBounds.width !== cur.width ||
+      prevBounds.height !== cur.height
+    ) {
+      view.setBounds(cur)
+      win.lastBoundsByTab.set(tabId, { ...cur })
+      changed = true
+    }
+    return changed
+  }
+
   attachView(tabId: TabId, windowId: WindowId): void {
     const win = this.windows.get(windowId)
     const view = this.tabViews.get(tabId)
     if (!win || !view) return
 
-    if (win.attachedTabId && win.attachedTabId !== tabId) {
-      const oldView = this.tabViews.get(win.attachedTabId)
-      if (oldView) {
-        try {
-          win.baseWindow.contentView.removeChildView(oldView)
-        } catch {
-          // Ignore
-        }
-      }
-    }
-
+    const prevTabId = win.attachedTabId
     win.attachedTabId = tabId
     if (!win.overlayOpen) {
+      const changed = this.mountViewInWindow(win, tabId, view)
       view.setVisible(true)
-      win.baseWindow.contentView.addChildView(view)
-      view.setBounds(win.viewportBounds)
       view.webContents.setBackgroundThrottling(false)
-      view.webContents.invalidate()
+      if (prevTabId && prevTabId !== tabId) {
+        const oldView = this.tabViews.get(prevTabId)
+        oldView?.setVisible(false)
+      }
+      if (changed) {
+        view.webContents.invalidate()
+      }
     }
 
     const pendingUrl = this.pendingLoadUrls.get(tabId)
@@ -608,6 +667,16 @@ export class BrowserWindowManager
       void view.webContents.loadURL(pendingUrl).catch(() => {
         // Ignore ERR_ABORTED during rapid redirects/closes
       })
+    }
+  }
+
+  hideView(tabId: TabId, windowId: WindowId): void {
+    const win = this.windows.get(windowId)
+    const view = this.tabViews.get(tabId)
+    if (!win || !view) return
+    view.setVisible(false)
+    if (win.attachedTabId === tabId) {
+      win.attachedTabId = null
     }
   }
 
@@ -621,6 +690,8 @@ export class BrowserWindowManager
       if (win.attachedTabId === tabId) {
         win.attachedTabId = null
       }
+      win.mountedTabIds.delete(tabId)
+      win.lastBoundsByTab.delete(tabId)
       try {
         win.baseWindow.contentView.removeChildView(view)
       } catch {

@@ -236,6 +236,10 @@ async function bootstrap(): Promise<void> {
 
   app.on('before-quit', () => {
     if (maintenanceTimer) clearInterval(maintenanceTimer)
+    void tabLifecycle
+      .flushPendingWrites()
+      .then(() => storage.flushNow())
+      .catch(() => undefined)
     void kernel.stop()
   })
 }

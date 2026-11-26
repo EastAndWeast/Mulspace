@@ -21,6 +21,7 @@ export const TabLifecycleToken = createServiceToken<TabLifecycleManager>('TabLif
 export interface ITabViewAdapter {
   createView(tab: Tab, workspace: Workspace): Promise<void> | void
   attachView(tabId: TabId, windowId: WindowId): Promise<void> | void
+  hideView?(tabId: TabId, windowId: WindowId): Promise<void> | void
   detachView(tabId: TabId, windowId?: WindowId): Promise<void> | void
   destroyView(tabId: TabId): Promise<void> | void
   setBackgroundThrottling(tabId: TabId, enabled: boolean): Promise<void> | void
@@ -47,6 +48,9 @@ export class TabLifecycleManager implements IKernelModule {
   private readonly activeTabByWorkspace = new Map<WorkspaceId, TabId>()
   private readonly attachedWindowByTab = new Map<TabId, WindowId>()
   private readonly createdViews = new Set<TabId>()
+  private readonly dirtyPersistWorkspaces = new Set<WorkspaceId>()
+  private persistScheduled = false
+  private pendingPersist: Promise<void> = Promise.resolve()
 
   constructor(
     private readonly storage: IStorageRepository,
@@ -167,7 +171,17 @@ export class TabLifecycleManager implements IKernelModule {
     const tab = this.findTabMut(workspaceId, tabId)
     if (!tab) throw new Error(`Tab not found: ${tabId}`)
 
-    // Freeze any other tab currently attached to this window.
+    const prevState = tab.state
+    const prevActiveTabId = this.activeTabByWorkspace.get(workspaceId)
+    if (!this.createdViews.has(tab.id) || tab.state === 'discarded') {
+      await this.options.adapter.createView(structuredClone(tab), ws)
+      this.createdViews.add(tab.id)
+    }
+
+    // Mount and show the destination tab BEFORE hiding the previous tab to prevent blank flashes
+    await this.options.adapter.setBackgroundThrottling(tab.id, false)
+    await this.options.adapter.attachView(tab.id, windowId)
+
     for (const [attachedTabId, attachedWinId] of [...this.attachedWindowByTab.entries()]) {
       if (attachedWinId === windowId && attachedTabId !== tabId) {
         const prev = this.findTabAcrossWorkspacesMut(attachedTabId)
@@ -177,17 +191,8 @@ export class TabLifecycleManager implements IKernelModule {
       }
     }
 
-    const prevState = tab.state
-    if (!this.createdViews.has(tab.id) || tab.state === 'discarded') {
-      await this.options.adapter.createView(structuredClone(tab), ws)
-      this.createdViews.add(tab.id)
-    }
-
-    await this.options.adapter.setBackgroundThrottling(tab.id, false)
-    await this.options.adapter.attachView(tab.id, windowId)
     this.attachedWindowByTab.set(tab.id, windowId)
     this.activeTabByWorkspace.set(workspaceId, tab.id)
-    await this.options.setWorkspaceActiveTab?.(workspaceId, tab.id)
 
     tab.state = 'active'
     tab.lastActiveAt = now
@@ -200,20 +205,28 @@ export class TabLifecycleManager implements IKernelModule {
       })
     }
 
-    await this.enforceLiveTabCap(now)
-    await this.persistWorkspaceTabs(workspaceId)
     this.ctx.events.emit('tab:updated', { tab: structuredClone(tab) })
+    await this.enforceLiveTabCap(now)
+
+    if (prevActiveTabId !== tab.id) {
+      this.scheduleSetWorkspaceActiveTab(workspaceId, tab.id)
+    }
+    this.schedulePersistWorkspaceTabs(workspaceId)
     return structuredClone(tab)
   }
 
   async freezeWorkspaceViews(workspaceId: WorkspaceId, windowId: WindowId, now = Date.now()): Promise<void> {
     const tabs = this.tabsByWorkspace.get(workspaceId) ?? []
+    let changed = false
     for (const tab of tabs) {
       if (tab.state === 'active' && this.attachedWindowByTab.get(tab.id) === windowId) {
         await this.transitionToFrozen(tab, windowId, now)
+        changed = true
       }
     }
-    await this.persistWorkspaceTabs(workspaceId)
+    if (changed) {
+      this.schedulePersistWorkspaceTabs(workspaceId)
+    }
   }
 
   async closeTab(workspaceId: WorkspaceId, tabId: TabId, windowId?: WindowId): Promise<TabId | null> {
@@ -271,8 +284,8 @@ export class TabLifecycleManager implements IKernelModule {
     const tab = this.findTabMut(workspaceId, tabId)
     if (!tab) return undefined
     Object.assign(tab, patch)
-    await this.persistWorkspaceTabs(workspaceId)
     this.ctx.events.emit('tab:updated', { tab: structuredClone(tab) })
+    this.schedulePersistWorkspaceTabs(workspaceId)
     return structuredClone(tab)
   }
 
@@ -382,7 +395,11 @@ export class TabLifecycleManager implements IKernelModule {
   private async transitionToFrozen(tab: Tab, windowId?: WindowId, _now = Date.now()): Promise<void> {
     const prev = tab.state
     if (this.createdViews.has(tab.id)) {
-      await this.options.adapter.detachView(tab.id, windowId)
+      if (windowId && this.options.adapter.hideView) {
+        await this.options.adapter.hideView(tab.id, windowId)
+      } else {
+        await this.options.adapter.detachView(tab.id, windowId)
+      }
       await this.options.adapter.setBackgroundThrottling(tab.id, true)
     }
     this.attachedWindowByTab.delete(tab.id)
@@ -434,6 +451,42 @@ export class TabLifecycleManager implements IKernelModule {
       if (found) return found
     }
     return undefined
+  }
+
+  async dispose(): Promise<void> {
+    await this.flushPendingWrites()
+  }
+
+  async flushPendingWrites(): Promise<void> {
+    if (this.persistScheduled) {
+      await Promise.resolve()
+    }
+    await this.pendingPersist
+  }
+
+  private schedulePersistWorkspaceTabs(workspaceId: WorkspaceId): void {
+    this.dirtyPersistWorkspaces.add(workspaceId)
+    if (this.persistScheduled) return
+    this.persistScheduled = true
+    queueMicrotask(() => {
+      this.persistScheduled = false
+      const wsIds = [...this.dirtyPersistWorkspaces]
+      this.dirtyPersistWorkspaces.clear()
+      for (const wsId of wsIds) {
+        const snapshot = (this.tabsByWorkspace.get(wsId) ?? []).map((t) => structuredClone(t))
+        this.pendingPersist = this.pendingPersist
+          .then(() => this.storage.saveTabsForWorkspace(wsId, snapshot))
+          .catch(() => undefined)
+      }
+    })
+  }
+
+  private scheduleSetWorkspaceActiveTab(workspaceId: WorkspaceId, tabId: TabId | null): void {
+    const updater = this.options.setWorkspaceActiveTab
+    if (!updater) return
+    this.pendingPersist = this.pendingPersist
+      .then(() => updater(workspaceId, tabId))
+      .catch(() => undefined)
   }
 
   private async persistWorkspaceTabs(workspaceId: WorkspaceId): Promise<void> {
