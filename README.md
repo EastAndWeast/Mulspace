@@ -1,8 +1,14 @@
 # Mulspace (`EastAndWeast/Mulspace`)
 
+> Multi-account isolated workspace AI browser for SaaS, operations, and multi-session workflows — supporting unlimited isolated Chromium storage partitions, per-workspace proxy routing (Clash / V2Ray / Mihomo), workspace-scoped AI Agent & bidirectional MCP, Chrome MV3 extensions, Material Design 3 themes, and Multab start-page workbench.
+>
 > 多账号工作区 AI 浏览器 — 原生支持无限账号空间隔离、单核多路由代理（Clash / V2Ray / Mihomo）、工作区隔离 AI Agent / Skills / 双向 MCP、Chrome MV3 扩展、Google Material Design 3 主题分离与 GitHub Releases 自动更新检测。
 
-仓库地址：https://github.com/EastAndWeast/Mulspace
+- **Repository**: https://github.com/EastAndWeast/Mulspace
+- **Downloads**: https://github.com/EastAndWeast/Mulspace/releases
+- **License**: [GNU GPL v3.0](./LICENSE) (`GPL-3.0-only`)
+- **Privacy Policy**: [PRIVACY.md](./PRIVACY.md)
+- **Code Signing Policy**: [CODE_SIGNING_POLICY.md](./CODE_SIGNING_POLICY.md)
 
 ---
 
@@ -58,3 +64,11 @@ pnpm package:win
 - **Windows**：x64 安装包 `.exe`（NSIS）与便携版 `.zip`
 
 下载页面：https://github.com/EastAndWeast/Mulspace/releases
+
+---
+
+## Code Signing & License / 代码签名与开源协议
+
+- **License**: [GNU General Public License v3.0](./LICENSE) (`GPL-3.0-only`)
+- **macOS Releases**: Signed and notarized with Apple Developer ID.
+- **Windows Releases**: Free code signing provided by [SignPath.io](https://signpath.io), certificate by [SignPath Foundation](https://signpath.org). See [CODE_SIGNING_POLICY.md](./CODE_SIGNING_POLICY.md) and [PRIVACY.md](./PRIVACY.md).
