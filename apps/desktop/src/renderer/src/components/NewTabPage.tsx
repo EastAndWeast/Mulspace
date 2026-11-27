@@ -110,9 +110,11 @@ function MultabEntry({
 }: MultabEntryProps) {
   const [iconLoaded, setIconLoaded] = useState(false)
   const [iconFailed, setIconFailed] = useState(false)
+  const [iconFullBleed, setIconFullBleed] = useState(false)
   useEffect(() => {
     setIconLoaded(false)
     setIconFailed(false)
+    setIconFullBleed(false)
   }, [item.iconUrl])
 
   const host = getDisplayHost(item.url)
@@ -192,7 +194,9 @@ function MultabEntry({
         className={`wb-multab__tile ${isDragging ? 'wb-multab__card--dragging' : ''}`}
       >
         <div
-          className={`wb-multab__tile-box ${showFavicon ? 'wb-multab__tile-box--favicon' : ''}`}
+          className={`wb-multab__tile-box ${showFavicon ? 'wb-multab__tile-box--favicon' : ''} ${
+            showFavicon && iconFullBleed ? 'wb-multab__tile-box--full' : ''
+          }`}
           style={{ backgroundColor: showFavicon ? undefined : item.iconBg || '#1F5AE0' }}
         >
           {quickActions}
@@ -207,8 +211,19 @@ function MultabEntry({
               onDragStart={(e) => e.preventDefault()}
               style={showFavicon ? undefined : { position: 'absolute', opacity: 0, pointerEvents: 'none' }}
               onLoad={(e) => {
-                if (e.currentTarget.naturalWidth > 1) setIconLoaded(true)
-                else setIconFailed(true)
+                const { naturalWidth, naturalHeight } = e.currentTarget
+                if (naturalWidth > 1) {
+                  const isSvg = /\.svg(?:[?#]|$)/i.test(item.iconUrl ?? '')
+                  const isSquareHiRes =
+                    !isSvg &&
+                    naturalWidth >= 64 &&
+                    naturalHeight >= 64 &&
+                    Math.abs(naturalWidth - naturalHeight) <= Math.max(4, naturalWidth * 0.15)
+                  setIconFullBleed(isSquareHiRes)
+                  setIconLoaded(true)
+                } else {
+                  setIconFailed(true)
+                }
               }}
               onError={() => setIconFailed(true)}
             />
@@ -226,7 +241,9 @@ function MultabEntry({
     >
       {quickActions}
       <span
-        className={`wb-multab__card-icon ${showFavicon ? 'wb-multab__card-icon--favicon' : ''}`}
+        className={`wb-multab__card-icon ${showFavicon ? 'wb-multab__card-icon--favicon' : ''} ${
+          showFavicon && iconFullBleed ? 'wb-multab__card-icon--full' : ''
+        }`}
         style={!showFavicon ? { backgroundColor: item.iconBg || '#1F5AE0' } : undefined}
       >
         {!showFavicon ? <span>{getMonogram(item.title, item.url)}</span> : null}
@@ -238,8 +255,19 @@ function MultabEntry({
             onDragStart={(e) => e.preventDefault()}
             style={showFavicon ? undefined : { position: 'absolute', opacity: 0, pointerEvents: 'none' }}
             onLoad={(e) => {
-              if (e.currentTarget.naturalWidth > 1) setIconLoaded(true)
-              else setIconFailed(true)
+              const { naturalWidth, naturalHeight } = e.currentTarget
+              if (naturalWidth > 1) {
+                const isSvg = /\.svg(?:[?#]|$)/i.test(item.iconUrl ?? '')
+                const isSquareHiRes =
+                  !isSvg &&
+                  naturalWidth >= 64 &&
+                  naturalHeight >= 64 &&
+                  Math.abs(naturalWidth - naturalHeight) <= Math.max(4, naturalWidth * 0.15)
+                setIconFullBleed(isSquareHiRes)
+                setIconLoaded(true)
+              } else {
+                setIconFailed(true)
+              }
             }}
             onError={() => setIconFailed(true)}
           />

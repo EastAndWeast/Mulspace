@@ -920,12 +920,24 @@
 }
 
 .wb-multab__tile-box--favicon img {
-  width: 31px;
-  height: 31px;
+  width: 36px;
+  height: 36px;
   object-fit: contain;
-  border-radius: 7px;
+  border-radius: 8px;
   pointer-events: none;
   user-select: none;
+}
+
+.wb-multab__tile-box--full {
+  background: rgba(246, 248, 253, 0.94);
+  border: 1px solid rgba(255, 255, 255, 0.22);
+}
+
+.wb-multab__tile-box--full img {
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+  border-radius: 15px;
 }
 
 .wb-multab__tile-box--add {
@@ -1021,6 +1033,13 @@
   border-radius: 4px;
 }
 
+.wb-multab__card-icon--full img {
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+  border-radius: 9px;
+}
+
 .wb-multab__card-add-icon {
   background: rgba(255, 255, 255, 0.08);
   color: var(--mt-text-sub);
@@ -1053,6 +1072,7 @@
   position: absolute;
   top: 4px;
   right: 4px;
+  z-index: 2;
   display: flex;
   align-items: center;
   gap: 2px;

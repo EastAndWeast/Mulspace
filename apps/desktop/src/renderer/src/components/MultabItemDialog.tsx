@@ -50,14 +50,16 @@ export function MultabItemDialog({
   onDelete,
   onCreateCategory,
 }: MultabItemDialogProps) {
-  const [title, setTitle] = useState('')
-  const [url, setUrl] = useState('')
-  const [iconUrl, setIconUrl] = useState('')
+  const [title, setTitle] = useState(editingItem?.title ?? initialDraft?.title ?? '')
+  const [url, setUrl] = useState(editingItem?.url ?? initialDraft?.url ?? '')
+  const [iconUrl, setIconUrl] = useState(editingItem?.iconUrl ?? initialDraft?.iconUrl ?? '')
   const [iconPreviewFailed, setIconPreviewFailed] = useState(false)
   const [fetchingMeta, setFetchingMeta] = useState(false)
-  const [categoryId, setCategoryId] = useState('')
-  const [iconBg, setIconBg] = useState('#1F5AE0')
-  const [pinned, setPinned] = useState(false)
+  const [categoryId, setCategoryId] = useState(
+    editingItem?.categoryId ?? initialDraft?.categoryId ?? defaultCategoryId ?? categories[0]?.id ?? '',
+  )
+  const [iconBg, setIconBg] = useState(editingItem?.iconBg || '#1F5AE0')
+  const [pinned, setPinned] = useState(editingItem ? Boolean(editingItem.pinned) : Boolean(initialDraft))
   const [newCategoryName, setNewCategoryName] = useState('')
   const [showNewCat, setShowNewCat] = useState(false)
   const [error, setError] = useState<string | null>(null)
@@ -92,10 +94,10 @@ export function MultabItemDialog({
   }, [open, editingItem, initialDraft, defaultCategoryId])
 
   useEffect(() => {
-    if (open && !categoryId && categories[0]?.id) {
-      setCategoryId(categories[0].id)
+    if (open && categories[0]?.id) {
+      setCategoryId((prev) => prev || categories[0]!.id)
     }
-  }, [open, categoryId, categories])
+  }, [open, categories])
 
   const handleFetchMeta = async (targetUrl: string, forceOverwrite: boolean): Promise<void> => {
     const candidate = targetUrl.trim()
@@ -264,6 +266,17 @@ export function MultabItemDialog({
             }}
             placeholder="图标链接（留空使用首字母图标）"
           />
+          {iconUrl.trim() ? (
+            <Button
+              variant="text"
+              onClick={() => {
+                setIconUrl('')
+                setIconPreviewFailed(false)
+              }}
+            >
+              改用首字母
+            </Button>
+          ) : null}
         </div>
       </div>
 

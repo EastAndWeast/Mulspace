@@ -47,6 +47,7 @@ import {
   ShieldCheck,
   SlidersHorizontal,
   Snowflake,
+  Star,
   TerminalSquare,
   Trash2,
   Volume2,
@@ -572,18 +573,23 @@ export function App() {
   }, [activeTab?.url, multabState.items])
 
   const openBookmarkModal = useCallback((): void => {
-    if (!activeTab || activeTab.url === NEW_TAB_URL || !/^https?:\/\//i.test(activeTab.url)) return
-    if (currentTabBookmark) {
-      setEditingMultabItem(currentTabBookmark)
-      setMultabItemDraft(null)
+    if (activeTab && activeTab.url !== NEW_TAB_URL && /^https?:\/\//i.test(activeTab.url)) {
+      if (currentTabBookmark) {
+        setEditingMultabItem(currentTabBookmark)
+        setMultabItemDraft(null)
+      } else {
+        setEditingMultabItem(null)
+        setMultabItemDraft({
+          title: activeTab.title || activeTab.url,
+          url: activeTab.url,
+          iconUrl: activeTab.faviconUrl,
+          categoryId: multabState.categories[0]?.id,
+        })
+      }
     } else {
       setEditingMultabItem(null)
-      setMultabItemDraft({
-        title: activeTab.title || activeTab.url,
-        url: activeTab.url,
-        iconUrl: activeTab.faviconUrl,
-        categoryId: multabState.categories[0]?.id,
-      })
+      setMultabItemDraft(null)
+      setMultabDefaultCatId(multabState.categories[0]?.id)
     }
     setMultabDialogFromStar(true)
     setMultabItemDialogOpen(true)
@@ -1001,12 +1007,24 @@ export function App() {
             <AddressBar
               tabId={activeTab?.id}
               tabUrl={activeTab?.url}
-              isBookmarked={Boolean(currentTabBookmark)}
-              onToggleBookmark={openBookmarkModal}
               onNavigate={handleNavigate}
             />
 
             <div className="wb-toolbar__tools">
+              <IconButton
+                className={currentTabBookmark ? 'wb-toolbar-star--active' : undefined}
+                title={
+                  currentTabBookmark
+                    ? '已收藏到 Multab（点击编辑） (⌘D)'
+                    : showNewTab
+                      ? '添加网站收藏到 Multab'
+                      : '收藏当前网页到 Multab (⌘D)'
+                }
+                active={Boolean(currentTabBookmark)}
+                onClick={openBookmarkModal}
+              >
+                <Star size={15} fill={currentTabBookmark ? 'currentColor' : 'none'} />
+              </IconButton>
               {recording ? (
                 <button
                   type="button"
@@ -1442,6 +1460,7 @@ export function App() {
             onClose={() => setMultabItemDialogOpen(false)}
             onSave={async (input) => {
               await window.browserApi.saveMultabItem(input)
+              showChromeToast(editingMultabItem ? '已保存书签修改' : '已添加到 Multab 收藏')
             }}
             onDelete={async (itemId) => {
               await window.browserApi.deleteMultabItem(itemId)

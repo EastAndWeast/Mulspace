@@ -392,6 +392,10 @@
   flex: none;
 }
 
+.wb-toolbar-star--active {
+  color: #f59e0b !important;
+}
+
 .wb-rec-pill {
   display: inline-flex;
   align-items: center;
