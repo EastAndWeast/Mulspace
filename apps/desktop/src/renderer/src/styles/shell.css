@@ -452,6 +452,30 @@
   background: transparent;
 }
 
+.wb-address__star {
+  display: inline-grid;
+  place-items: center;
+  flex: none;
+  width: 24px;
+  height: 24px;
+  padding: 0;
+  border: 0;
+  border-radius: 6px;
+  background: transparent;
+  color: var(--wb-sys-color-on-surface-variant);
+  cursor: pointer;
+  transition: background-color 110ms ease, color 110ms ease;
+}
+
+.wb-address__star:hover {
+  background: color-mix(in srgb, var(--wb-sys-color-on-surface) 8%, transparent);
+  color: var(--wb-sys-color-on-surface);
+}
+
+.wb-address__star--active {
+  color: var(--wb-sys-color-primary);
+}
+
 .wb-toolbar-chip {
   display: inline-flex;
   align-items: center;
@@ -987,6 +1011,148 @@
 .wb-theme-choice__check {
   flex: none;
   color: var(--wb-sys-color-primary);
+}
+
+/* ---- Multab Dialog Helpers ---- */
+
+.wb-multab-error {
+  padding: 9px 11px;
+  border-radius: 8px;
+  background: var(--wb-sys-color-error-container);
+  color: var(--wb-sys-color-on-error-container);
+  font-size: 12px;
+}
+
+.wb-multab-notice {
+  padding: 9px 11px;
+  border-radius: 8px;
+  background: color-mix(in srgb, var(--wb-sys-color-primary) 12%, transparent);
+  color: var(--wb-sys-color-primary);
+  font-size: 12px;
+}
+
+.wb-multab-cat-select-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.wb-multab-cat-select-row .wb-input {
+  flex: 1;
+}
+
+.wb-multab-icon-preview {
+  width: 34px;
+  height: 34px;
+  flex: none;
+  border-radius: 9px;
+  border: 1px solid var(--wb-sys-color-outline-variant);
+  display: grid;
+  place-items: center;
+  color: #ffffff;
+  font-size: 14px;
+  font-weight: 650;
+  overflow: hidden;
+  background: var(--wb-sys-color-surface-container-low);
+}
+
+.wb-multab-icon-preview img {
+  width: 22px;
+  height: 22px;
+  object-fit: contain;
+  border-radius: 4px;
+}
+
+.wb-multab-sync-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 10px;
+}
+
+.wb-multab-sync-box {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  padding: 10px;
+  border-radius: 8px;
+  border: 1px solid var(--wb-sys-color-outline-variant);
+  background: var(--wb-sys-color-surface-container-lowest);
+  font-size: 12px;
+}
+
+[data-theme-scheme='dark'] .wb-multab-sync-box {
+  background: var(--wb-sys-color-surface-container-low);
+}
+
+.wb-multab-code-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 6px;
+}
+
+.wb-multab-code {
+  font-family: var(--wb-sys-font-mono);
+  font-size: 18px;
+  font-weight: 700;
+  letter-spacing: 0.14em;
+  color: var(--wb-sys-color-primary);
+}
+
+.wb-dialog-backdrop--anchor-top-right {
+  align-items: flex-start;
+  justify-content: flex-end;
+  padding: 74px 20px 20px;
+}
+
+.wb-dialog-backdrop--anchor-top-right .wb-dialog {
+  width: min(380px, calc(100vw - 40px));
+}
+
+.wb-multab-pin-toggle {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 8px 11px;
+  border-radius: 9px;
+  border: 1px solid var(--wb-sys-color-outline-variant);
+  background: var(--wb-sys-color-surface-container-lowest);
+  font-size: 12.5px;
+  color: var(--wb-sys-color-on-surface);
+  cursor: pointer;
+}
+
+[data-theme-scheme='dark'] .wb-multab-pin-toggle {
+  background: var(--wb-sys-color-surface-container-low);
+}
+
+.wb-multab-switch {
+  width: 34px;
+  height: 20px;
+  border-radius: 999px;
+  background: color-mix(in srgb, var(--wb-sys-color-on-surface) 22%, transparent);
+  position: relative;
+  transition: background-color 140ms ease;
+}
+
+.wb-multab-switch::after {
+  content: '';
+  position: absolute;
+  top: 2px;
+  left: 2px;
+  width: 16px;
+  height: 16px;
+  border-radius: 50%;
+  background: #ffffff;
+  transition: transform 140ms ease;
+}
+
+.wb-multab-switch--on {
+  background: var(--wb-sys-color-primary);
+}
+
+.wb-multab-switch--on::after {
+  transform: translateX(14px);
 }
 
 /* ---- Narrow Desktop Window (< 1020px) ---- */

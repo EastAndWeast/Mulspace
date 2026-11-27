@@ -6,7 +6,10 @@ import {
   type ImportProxySubscriptionInput,
   type McpHostConfig,
   type McpServerConfig,
+  type MultabPrefsPatch,
   type RunBatchJobInput,
+  type SaveMultabCategoryInput,
+  type SaveMultabItemInput,
   type SkillDefinition,
   type TabId,
   type UpdateWorkspaceInput,
@@ -23,11 +26,12 @@ import { defaultThemeRegistry } from '@wb/themes'
 import { UpdateService } from '@wb/updater'
 import { WorkspaceService } from '@wb/workspace-core'
 import { app, dialog, ipcMain, safeStorage, session, shell } from 'electron'
-import { mkdtemp, rm } from 'node:fs/promises'
+import { mkdtemp, readFile, rm, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { ElectronCdpAutomationBridge } from './cdp-bridge.js'
 import { installApplicationMenu } from './app-menu.js'
+import { MultabService } from './multab/multab-service.js'
 import { BrowserWindowManager, normalizeNavigationInput } from './window-manager.js'
 
 // Allow web notification / alert sounds without requiring a prior gesture inside each tab
@@ -128,6 +132,7 @@ async function bootstrap(): Promise<void> {
     getAutoCheckEnabled: () => currentSettings.autoCheckUpdates,
     disableScheduler: isSmokeTest,
   })
+  const multabService = new MultabService(storage)
 
   windowManager.attachServices({
     tabLifecycle,
@@ -139,12 +144,13 @@ async function bootstrap(): Promise<void> {
   kernel
     .use(workspaceService)
     .use(tabLifecycle)
+    .use(multabService)
     .use(proxyService)
     .use(extensionService)
     .use(agentService)
     .use(updateService)
 
-  const { backgroundReady } = await kernel.startWithDeferredBackground(2)
+  const { backgroundReady } = await kernel.startWithDeferredBackground(3)
 
   // Inject proxy credentials per workspace partition when Electron challenges for proxy auth,
   // but abort immediately if the same credentials are rejected twice in a short window.
@@ -215,6 +221,7 @@ async function bootstrap(): Promise<void> {
     kernel,
     workspaceService,
     tabLifecycle,
+    multabService,
     proxyService,
     extensionService,
     agentService,
@@ -250,6 +257,7 @@ function registerIpcHandlers(deps: {
   kernel: BrowserKernel
   workspaceService: WorkspaceService
   tabLifecycle: TabLifecycleManager
+  multabService: MultabService
   proxyService: ProxyService
   extensionService: ExtensionService
   agentService: AgentService
@@ -261,6 +269,7 @@ function registerIpcHandlers(deps: {
     kernel,
     workspaceService,
     tabLifecycle,
+    multabService,
     proxyService,
     extensionService,
     agentService,
@@ -575,6 +584,74 @@ function registerIpcHandlers(deps: {
       'https://github.com/EastAndWeast/Mulspace/releases'
     await shell.openExternal(targetUrl)
   })
+
+  // Multab Website Workbench & 6-Digit Sync
+  ipcMain.handle(IPC_CHANNELS.MULTAB_GET_STATE, () => multabService.getState())
+  ipcMain.handle(IPC_CHANNELS.MULTAB_SAVE_CATEGORY, (_e, input: SaveMultabCategoryInput) =>
+    multabService.saveCategory(input),
+  )
+  ipcMain.handle(IPC_CHANNELS.MULTAB_DELETE_CATEGORY, (_e, categoryId: string) =>
+    multabService.deleteCategory(categoryId),
+  )
+  ipcMain.handle(IPC_CHANNELS.MULTAB_REORDER_CATEGORIES, (_e, orderedIds: string[]) =>
+    multabService.reorderCategories(orderedIds),
+  )
+  ipcMain.handle(IPC_CHANNELS.MULTAB_SAVE_ITEM, (_e, input: SaveMultabItemInput) =>
+    multabService.saveItem(input),
+  )
+  ipcMain.handle(IPC_CHANNELS.MULTAB_DELETE_ITEM, (_e, itemId: string) =>
+    multabService.deleteItem(itemId),
+  )
+  ipcMain.handle(
+    IPC_CHANNELS.MULTAB_REORDER_ITEMS,
+    (_e, categoryId: string, orderedIds: string[]) =>
+      multabService.reorderItems(categoryId, orderedIds),
+  )
+  ipcMain.handle(IPC_CHANNELS.MULTAB_UPDATE_PREFS, (_e, patch: MultabPrefsPatch) =>
+    multabService.updatePrefs(patch),
+  )
+  ipcMain.handle(IPC_CHANNELS.MULTAB_TEST_RELAY, (_e, relayUrl: string) =>
+    multabService.testSyncRelay(relayUrl),
+  )
+  ipcMain.handle(IPC_CHANNELS.MULTAB_SYNC_PUSH, (_e, relayUrl?: string) =>
+    multabService.pushSyncCode(relayUrl),
+  )
+  ipcMain.handle(IPC_CHANNELS.MULTAB_SYNC_PULL, (_e, code: string, relayUrl?: string) =>
+    multabService.pullSyncCode(code, relayUrl),
+  )
+  ipcMain.handle(IPC_CHANNELS.MULTAB_IMPORT_HTML_FILE, async () => {
+    const win = windowManager.getPrimaryBaseWindow()
+    const res = await dialog.showOpenDialog(win!, {
+      properties: ['openFile'],
+      filters: [{ name: 'HTML Bookmarks', extensions: ['html', 'htm'] }],
+    })
+    if (res.canceled || !res.filePaths[0]) return null
+    const html = await readFile(res.filePaths[0], 'utf8')
+    return multabService.importChromeHtml(html)
+  })
+  ipcMain.handle(IPC_CHANNELS.MULTAB_IMPORT_JSON_FILE, async () => {
+    const win = windowManager.getPrimaryBaseWindow()
+    const res = await dialog.showOpenDialog(win!, {
+      properties: ['openFile'],
+      filters: [{ name: 'Multab JSON', extensions: ['json'] }],
+    })
+    if (res.canceled || !res.filePaths[0]) return null
+    const json = await readFile(res.filePaths[0], 'utf8')
+    return multabService.importJson(json)
+  })
+  ipcMain.handle(IPC_CHANNELS.MULTAB_EXPORT_JSON_FILE, async () => {
+    const win = windowManager.getPrimaryBaseWindow()
+    const res = await dialog.showSaveDialog(win!, {
+      defaultPath: 'multab-bookmarks.json',
+      filters: [{ name: 'Multab JSON', extensions: ['json'] }],
+    })
+    if (res.canceled || !res.filePath) return false
+    await writeFile(res.filePath, multabService.exportJson(), 'utf8')
+    return true
+  })
+  ipcMain.handle(IPC_CHANNELS.MULTAB_FETCH_SITE_META, (_e, url: string) =>
+    multabService.fetchSiteMeta(url),
+  )
 }
 
 app.whenReady().then(() => {

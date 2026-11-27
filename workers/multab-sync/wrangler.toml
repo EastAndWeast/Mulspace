@@ -1,0 +1,7 @@
+name = "multab-sync-relay"
+main = "src/index.ts"
+compatibility_date = "2025-10-01"
+
+[[kv_namespaces]]
+binding = "MULTAB_SYNC_KV"
+id = "REPLACE_WITH_YOUR_KV_NAMESPACE_ID"

@@ -13,6 +13,12 @@ import { NEW_TAB_URL } from '@wb/contracts'
 import type {
   AgentMessage,
   BrowserWindowSnapshot,
+  MultabItem,
+  MultabPrefsPatch,
+  MultabSearchEngineId,
+  MultabState,
+  MultabViewMode,
+  SaveMultabCategoryInput,
   SkillDefinition,
   Tab,
   Workspace,
@@ -45,6 +51,7 @@ import {
   X,
 } from 'lucide-react'
 import { AddressBar } from './components/AddressBar.js'
+import type { MultabItemDraft } from './components/MultabItemDialog.js'
 import { NewTabPage } from './components/NewTabPage.js'
 import { WorkspaceGlyph } from './components/WorkspaceGlyph.js'
 import brandIcon from '../../../build/icon.svg'
@@ -57,6 +64,12 @@ const AiHubDialog = lazy(() =>
 )
 const ExtensionsDialog = lazy(() =>
   import('./components/ExtensionsDialog.js').then((m) => ({ default: m.ExtensionsDialog })),
+)
+const MultabItemDialog = lazy(() =>
+  import('./components/MultabItemDialog.js').then((m) => ({ default: m.MultabItemDialog })),
+)
+const MultabSyncDialog = lazy(() =>
+  import('./components/MultabSyncDialog.js').then((m) => ({ default: m.MultabSyncDialog })),
 )
 const ProxyManagerDialog = lazy(() =>
   import('./components/ProxyManagerDialog.js').then((m) => ({ default: m.ProxyManagerDialog })),
@@ -115,6 +128,12 @@ function TabSymbol({ tab }: { tab: Tab }) {
 
 export function App() {
   const [snapshot, setSnapshot] = useState<BrowserWindowSnapshot | null>(null)
+  const [multabState, setMultabState] = useState<MultabState>({
+    schemaVersion: 1,
+    searchEngine: 'bing',
+    categories: [],
+    items: [],
+  })
   const [aiSidebarOpen, setAiSidebarOpen] = useState(false)
   const [wsDialogOpen, setWsDialogOpen] = useState(false)
   const [editingWorkspace, setEditingWorkspace] = useState<Workspace | null>(null)
@@ -122,6 +141,12 @@ export function App() {
   const [proxyDialogOpen, setProxyDialogOpen] = useState(false)
   const [extDialogOpen, setExtDialogOpen] = useState(false)
   const [aiHubOpen, setAiHubOpen] = useState(false)
+  const [multabItemDialogOpen, setMultabItemDialogOpen] = useState(false)
+  const [editingMultabItem, setEditingMultabItem] = useState<MultabItem | null>(null)
+  const [multabItemDraft, setMultabItemDraft] = useState<MultabItemDraft | null>(null)
+  const [multabDefaultCatId, setMultabDefaultCatId] = useState<string | undefined>(undefined)
+  const [multabDialogFromStar, setMultabDialogFromStar] = useState(false)
+  const [multabSyncOpen, setMultabSyncOpen] = useState(false)
 
   const [agentMessages, setAgentMessages] = useState<AgentMessage[]>([])
   const [skills, setSkills] = useState<SkillDefinition[]>([])
@@ -142,7 +167,13 @@ export function App() {
 
   useEffect(() => {
     void window.browserApi.getState().then(setSnapshot)
-    return window.browserApi.onStateUpdated(setSnapshot)
+    void window.browserApi.getMultabState().then(setMultabState)
+    const offSnapshot = window.browserApi.onStateUpdated(setSnapshot)
+    const offMultab = window.browserApi.onMultabUpdated(setMultabState)
+    return () => {
+      offSnapshot()
+      offMultab()
+    }
   }, [])
 
   const activeWorkspace = useMemo(() => {
@@ -191,6 +222,107 @@ export function App() {
   const handleCreateWorkspace = useCallback((): void => {
     setEditingWorkspace(null)
     setWsDialogOpen(true)
+  }, [])
+
+  const tabCountsSignature = useMemo(() => {
+    if (!snapshot) return ''
+    return snapshot.workspaces
+      .slice(0, 6)
+      .map((w) => `${w.id}:${(snapshot.tabsByWorkspace[w.id] ?? []).length}`)
+      .join('|')
+  }, [snapshot])
+
+  const tabCountsByWorkspace = useMemo(() => {
+    const counts: Record<string, number> = {}
+    if (!snapshot) return counts
+    for (const w of snapshot.workspaces.slice(0, 6)) {
+      counts[w.id] = (snapshot.tabsByWorkspace[w.id] ?? []).length
+    }
+    return counts
+    // Only recompute when workspace list or tab counts change
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [tabCountsSignature])
+
+  const handleOpenInNewTab = useCallback(
+    (url: string): void => {
+      if (!activeWorkspace) return
+      void window.browserApi.createTab(activeWorkspace.id, url, false)
+    },
+    [activeWorkspace?.id],
+  )
+
+  const handleOpenMultabAddItem = useCallback((categoryId?: string): void => {
+    setEditingMultabItem(null)
+    setMultabItemDraft(null)
+    setMultabDefaultCatId(categoryId)
+    setMultabDialogFromStar(false)
+    setMultabItemDialogOpen(true)
+  }, [])
+
+  const handleEditMultabItem = useCallback((item: MultabItem): void => {
+    setEditingMultabItem(item)
+    setMultabItemDraft(null)
+    setMultabDialogFromStar(false)
+    setMultabItemDialogOpen(true)
+  }, [])
+
+  const handleDeleteMultabItem = useCallback((itemId: string): void => {
+    void window.browserApi.deleteMultabItem(itemId)
+  }, [])
+
+  const handleReorderMultabItems = useCallback((categoryId: string, orderedIds: string[]): void => {
+    void window.browserApi.reorderMultabItems(categoryId, orderedIds)
+  }, [])
+
+  const handleMoveMultabItem = useCallback(async (item: MultabItem, targetCategoryId: string): Promise<void> => {
+    await window.browserApi.saveMultabItem({
+      id: item.id,
+      categoryId: targetCategoryId,
+      title: item.title,
+      url: item.url,
+      iconUrl: item.iconUrl,
+      iconBg: item.iconBg,
+    })
+  }, [])
+
+  const handleToggleMultabPin = useCallback(async (item: MultabItem): Promise<void> => {
+    await window.browserApi.saveMultabItem({
+      id: item.id,
+      categoryId: item.categoryId,
+      title: item.title,
+      url: item.url,
+      iconUrl: item.iconUrl,
+      iconBg: item.iconBg,
+      pinned: !item.pinned,
+    })
+  }, [])
+
+  const handleReorderMultabCategories = useCallback((orderedIds: string[]): void => {
+    void window.browserApi.reorderMultabCategories(orderedIds)
+  }, [])
+
+  const handleSaveMultabCategory = useCallback((input: SaveMultabCategoryInput): Promise<MultabState> => {
+    return window.browserApi.saveMultabCategory(input)
+  }, [])
+
+  const handleDeleteMultabCategory = useCallback(async (categoryId: string): Promise<void> => {
+    await window.browserApi.deleteMultabCategory(categoryId)
+  }, [])
+
+  const handleChangeMultabEngine = useCallback((engine: MultabSearchEngineId): void => {
+    void window.browserApi.updateMultabPrefs({ searchEngine: engine })
+  }, [])
+
+  const handleChangeMultabViewMode = useCallback((viewMode: MultabViewMode): void => {
+    void window.browserApi.updateMultabPrefs({ viewMode })
+  }, [])
+
+  const handleUpdateMultabPrefs = useCallback((patch: MultabPrefsPatch): void => {
+    void window.browserApi.updateMultabPrefs(patch)
+  }, [])
+
+  const handleOpenMultabSync = useCallback((): void => {
+    setMultabSyncOpen(true)
   }, [])
 
   const syncViewportBounds = useCallback(() => {
@@ -381,7 +513,56 @@ export function App() {
     window.addEventListener('blur', finishDrag)
   }
 
-  const anyModalOpen = wsDialogOpen || settingsOpen || proxyDialogOpen || extDialogOpen || aiHubOpen
+  const currentTabBookmark = useMemo(() => {
+    const rawUrl = activeTab?.url
+    if (!rawUrl || rawUrl === NEW_TAB_URL || !/^https?:\/\//i.test(rawUrl)) return null
+    let normalized = rawUrl
+    try {
+      normalized = new URL(rawUrl).toString()
+    } catch {
+      // Keep rawUrl
+    }
+    return multabState.items.find((item) => {
+      try {
+        return new URL(item.url).toString() === normalized
+      } catch {
+        return item.url === rawUrl
+      }
+    }) ?? null
+  }, [activeTab?.url, multabState.items])
+
+  const openBookmarkModal = useCallback((): void => {
+    if (!activeTab || activeTab.url === NEW_TAB_URL || !/^https?:\/\//i.test(activeTab.url)) return
+    if (currentTabBookmark) {
+      setEditingMultabItem(currentTabBookmark)
+      setMultabItemDraft(null)
+    } else {
+      setEditingMultabItem(null)
+      setMultabItemDraft({
+        title: activeTab.title || activeTab.url,
+        url: activeTab.url,
+        iconUrl: activeTab.faviconUrl,
+        categoryId: multabState.categories[0]?.id,
+      })
+    }
+    setMultabDialogFromStar(true)
+    setMultabItemDialogOpen(true)
+  }, [activeTab, currentTabBookmark, multabState.categories])
+
+  useEffect(() => {
+    return window.browserApi.onToggleBookmark(() => {
+      openBookmarkModal()
+    })
+  }, [openBookmarkModal])
+
+  const anyModalOpen =
+    wsDialogOpen ||
+    settingsOpen ||
+    proxyDialogOpen ||
+    extDialogOpen ||
+    aiHubOpen ||
+    multabItemDialogOpen ||
+    multabSyncOpen
   useEffect(() => {
     void window.browserApi.setOverlayOpen(anyModalOpen)
   }, [anyModalOpen])
@@ -661,6 +842,8 @@ export function App() {
             <AddressBar
               tabId={activeTab?.id}
               tabUrl={activeTab?.url}
+              isBookmarked={Boolean(currentTabBookmark)}
+              onToggleBookmark={openBookmarkModal}
               onNavigate={handleNavigate}
             />
 
@@ -746,14 +929,28 @@ export function App() {
             <div ref={viewportRef} className="wb-viewport-slot">
               {showNewTab ? (
                 <NewTabPage
-                  key={activeTab.id}
                   workspace={activeWorkspace}
                   workspaces={snapshot.workspaces}
-                  tabsByWorkspace={snapshot.tabsByWorkspace}
+                  tabCountsByWorkspace={tabCountsByWorkspace}
                   proxyLabel={proxyLabel}
+                  multabState={multabState}
                   onNavigate={handleNavigate}
+                  onOpenInNewTab={handleOpenInNewTab}
                   onSwitchWorkspace={handleSwitchWorkspace}
                   onCreateWorkspace={handleCreateWorkspace}
+                  onOpenAddItem={handleOpenMultabAddItem}
+                  onEditItem={handleEditMultabItem}
+                  onDeleteItem={handleDeleteMultabItem}
+                  onReorderItems={handleReorderMultabItems}
+                  onMoveItemToCategory={handleMoveMultabItem}
+                  onTogglePinItem={handleToggleMultabPin}
+                  onReorderCategories={handleReorderMultabCategories}
+                  onSaveCategory={handleSaveMultabCategory}
+                  onDeleteCategory={handleDeleteMultabCategory}
+                  onChangeSearchEngine={handleChangeMultabEngine}
+                  onChangeViewMode={handleChangeMultabViewMode}
+                  onUpdatePrefs={handleUpdateMultabPrefs}
+                  onOpenSyncDialog={handleOpenMultabSync}
                 />
               ) : null}
             </div>
@@ -992,6 +1189,36 @@ export function App() {
             onOpenUpdateDownload={async () => {
               await window.browserApi.openUpdateDownload()
             }}
+          />
+        ) : null}
+
+        {multabItemDialogOpen ? (
+          <MultabItemDialog
+            open={multabItemDialogOpen}
+            categories={multabState.categories}
+            editingItem={editingMultabItem}
+            initialDraft={multabItemDraft}
+            defaultCategoryId={multabDefaultCatId}
+            anchorTopRight={multabDialogFromStar}
+            onClose={() => setMultabItemDialogOpen(false)}
+            onSave={async (input) => {
+              await window.browserApi.saveMultabItem(input)
+            }}
+            onDelete={async (itemId) => {
+              await window.browserApi.deleteMultabItem(itemId)
+            }}
+            onCreateCategory={async (name) => {
+              const updated = await window.browserApi.saveMultabCategory({ name, icon: 'folder' })
+              return updated.categories.find((c) => c.name === name)?.id
+            }}
+          />
+        ) : null}
+
+        {multabSyncOpen ? (
+          <MultabSyncDialog
+            open={multabSyncOpen}
+            multabState={multabState}
+            onClose={() => setMultabSyncOpen(false)}
           />
         ) : null}
       </Suspense>

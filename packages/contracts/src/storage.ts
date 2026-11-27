@@ -1,5 +1,6 @@
 import type { LLMProviderConfig, McpHostConfig, McpServerConfig, SkillDefinition } from './ai.js'
 import type { InstalledExtension } from './extension.js'
+import type { MultabState } from './multab.js'
 import type { ProxyNode, ProxySubscription } from './proxy.js'
 import type { Tab } from './tab.js'
 import type { ThemeManifest, ThemeMode } from './theme.js'
@@ -32,6 +33,7 @@ export interface PersistedBrowserState {
   mcpServers: McpServerConfig[]
   extensions: InstalledExtension[]
   customThemes: ThemeManifest[]
+  multab?: MultabState
 }
 
 export interface IStorageRepository {
@@ -47,4 +49,5 @@ export interface IStorageRepository {
   saveMcpServers(servers: McpServerConfig[]): Promise<void>
   saveExtensions(extensions: InstalledExtension[]): Promise<void>
   saveCustomThemes(themes: ThemeManifest[]): Promise<void>
+  saveMultab(state: MultabState): Promise<void>
 }

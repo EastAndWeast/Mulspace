@@ -83,6 +83,11 @@ export function installApplicationMenu(windowManager: BrowserWindowManager): voi
           click: () => windowManager.focusFocusedOmnibox(),
         },
         {
+          label: '收藏当前页面到 Multab',
+          accelerator: 'CmdOrCtrl+D',
+          click: () => windowManager.triggerBookmarkFocusedTab(),
+        },
+        {
           label: '后退',
           accelerator: 'CmdOrCtrl+[',
           click: () => windowManager.goBackFocusedTab(),

@@ -8,6 +8,16 @@ import type {
   SkillDefinition,
 } from './ai.js'
 import type { InstalledExtension } from './extension.js'
+import type {
+  MultabImportResult,
+  MultabPrefsPatch,
+  MultabSiteMetadata,
+  MultabState,
+  MultabSyncPullResult,
+  MultabSyncPushResult,
+  SaveMultabCategoryInput,
+  SaveMultabItemInput,
+} from './multab.js'
 import type { ImportProxySubscriptionInput, ProxyEngineStatus, ProxyNode, ProxySubscription } from './proxy.js'
 import type { AppSettings } from './storage.js'
 import type { Tab, TabMemorySummary } from './tab.js'
@@ -73,6 +83,7 @@ export const IPC_CHANNELS = {
   TAB_SHOW_CONTEXT_MENU: 'wb:tab:show-context-menu',
   TOOLBAR_SHOW_RELOAD_MENU: 'wb:toolbar:show-reload-menu',
   CHROME_FOCUS_OMNIBOX: 'wb:chrome:focus-omnibox',
+  CHROME_TOGGLE_BOOKMARK: 'wb:chrome:toggle-bookmark',
   TAB_SWEEP_MEMORY: 'wb:tab:sweep-memory',
   VIEWPORT_SET_BOUNDS: 'wb:viewport:set-bounds',
   WINDOW_SET_OVERLAY_OPEN: 'wb:window:set-overlay-open',
@@ -118,6 +129,23 @@ export const IPC_CHANNELS = {
   UPDATE_GET_STATE: 'wb:update:get-state',
   UPDATE_CHECK_NOW: 'wb:update:check-now',
   UPDATE_OPEN_DOWNLOAD: 'wb:update:open-download',
+  // Multab (Website Workbench, Bookmarks & 6-Digit Sync)
+  MULTAB_GET_STATE: 'wb:multab:get-state',
+  MULTAB_UPDATED: 'wb:multab:updated',
+  MULTAB_SAVE_CATEGORY: 'wb:multab:save-category',
+  MULTAB_DELETE_CATEGORY: 'wb:multab:delete-category',
+  MULTAB_REORDER_CATEGORIES: 'wb:multab:reorder-categories',
+  MULTAB_SAVE_ITEM: 'wb:multab:save-item',
+  MULTAB_DELETE_ITEM: 'wb:multab:delete-item',
+  MULTAB_REORDER_ITEMS: 'wb:multab:reorder-items',
+  MULTAB_UPDATE_PREFS: 'wb:multab:update-prefs',
+  MULTAB_TEST_RELAY: 'wb:multab:test-relay',
+  MULTAB_SYNC_PUSH: 'wb:multab:sync-push',
+  MULTAB_SYNC_PULL: 'wb:multab:sync-pull',
+  MULTAB_IMPORT_HTML_FILE: 'wb:multab:import-html-file',
+  MULTAB_IMPORT_JSON_FILE: 'wb:multab:import-json-file',
+  MULTAB_EXPORT_JSON_FILE: 'wb:multab:export-json-file',
+  MULTAB_FETCH_SITE_META: 'wb:multab:fetch-site-meta',
 } as const
 
 export interface BrowserApi {
@@ -190,4 +218,22 @@ export interface BrowserApi {
   getUpdateState(): Promise<UpdateState>
   checkForUpdates(): Promise<UpdateState>
   openUpdateDownload(): Promise<void>
+  // Multab
+  onToggleBookmark(listener: () => void): () => void
+  getMultabState(): Promise<MultabState>
+  onMultabUpdated(listener: (state: MultabState) => void): () => void
+  saveMultabCategory(input: SaveMultabCategoryInput): Promise<MultabState>
+  deleteMultabCategory(categoryId: string): Promise<MultabState>
+  reorderMultabCategories(orderedIds: string[]): Promise<MultabState>
+  saveMultabItem(input: SaveMultabItemInput): Promise<MultabState>
+  deleteMultabItem(itemId: string): Promise<MultabState>
+  reorderMultabItems(categoryId: string, orderedIds: string[]): Promise<MultabState>
+  updateMultabPrefs(patch: MultabPrefsPatch): Promise<MultabState>
+  testMultabSyncRelay(relayUrl: string): Promise<{ ok: boolean; error?: string }>
+  pushMultabSyncCode(relayUrl?: string): Promise<MultabSyncPushResult>
+  pullMultabSyncCode(code: string, relayUrl?: string): Promise<MultabSyncPullResult>
+  importMultabBookmarksHtml(): Promise<MultabImportResult | null>
+  importMultabJson(): Promise<MultabImportResult | null>
+  exportMultabJson(): Promise<boolean>
+  fetchMultabSiteMeta(url: string): Promise<MultabSiteMetadata>
 }

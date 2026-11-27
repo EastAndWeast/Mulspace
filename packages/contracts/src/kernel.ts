@@ -1,5 +1,6 @@
 import type { BatchJob } from './ai.js'
 import type { InstalledExtension } from './extension.js'
+import type { MultabState } from './multab.js'
 import type { ProxyEngineStatus } from './proxy.js'
 import type { AppSettings } from './storage.js'
 import type { Tab, TabLifecycleState } from './tab.js'
@@ -29,6 +30,7 @@ export interface KernelEventMap {
   'extensions:updated': { extensions: InstalledExtension[] }
   'themes:updated': { themes: ThemeManifest[] }
   'update:state-changed': { state: UpdateState }
+  'multab:updated': { state: MultabState }
 }
 
 export type Unsubscribe = () => void

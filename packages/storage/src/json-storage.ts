@@ -7,6 +7,7 @@ import type {
   InstalledExtension,
   IStorageRepository,
   McpServerConfig,
+  MultabState,
   PersistedBrowserState,
   ProxyNode,
   ProxySubscription,
@@ -288,6 +289,7 @@ export class JsonStorageRepository implements IStorageRepository {
           mcpServers: parsed.mcpServers ?? [],
           extensions: parsed.extensions ?? [],
           customThemes: parsed.customThemes ?? [],
+          multab: parsed.multab,
         })
         return structuredClone(this.state)
       }
@@ -373,6 +375,12 @@ export class JsonStorageRepository implements IStorageRepository {
   async saveCustomThemes(themes: ThemeManifest[]): Promise<void> {
     const state = await this.ensureState()
     state.customThemes = structuredClone(themes)
+    await this.flush(state)
+  }
+
+  async saveMultab(multabState: MultabState): Promise<void> {
+    const state = await this.ensureState()
+    state.multab = structuredClone(multabState)
     await this.flush(state)
   }
 

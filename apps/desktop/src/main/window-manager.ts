@@ -96,6 +96,7 @@ export class BrowserWindowManager
   private readonly windows = new Map<WindowId, ManagedWindow>()
   private readonly chromeWebContentsToWindowId = new Map<number, WindowId>()
   private readonly tabViews = new Map<TabId, WebContentsView>()
+  private readonly deferredNewTabSpecs = new Map<TabId, { tab: Tab; workspace: Workspace }>()
   private readonly tabIdToWorkspaceId = new Map<TabId, WorkspaceId>()
   private readonly proxyAuthByPartition = new Map<string, { username: string; password: string }>()
   private readonly allowedInsecureCertHosts = new Map<WorkspaceId, Set<string>>()
@@ -257,6 +258,13 @@ export class BrowserWindowManager
     this.kernel.events.on('ai:message', () => {
       this.aiMessageSeq++
       broadcastAll(true)
+    })
+    this.kernel.events.on('multab:updated', ({ state }) => {
+      for (const win of this.windows.values()) {
+        if (!win.chromeView.webContents.isDestroyed()) {
+          win.chromeView.webContents.send(IPC_CHANNELS.MULTAB_UPDATED, state)
+        }
+      }
     })
   }
 
@@ -672,6 +680,19 @@ export class BrowserWindowManager
   async createView(tab: Tab, workspace: Workspace): Promise<void> {
     if (this.tabViews.has(tab.id)) return
 
+    const targetUrl = tab.snapshot?.url ?? tab.url
+    const normalizedUrl = normalizeNavigationInput(targetUrl)
+    if (normalizedUrl === NEW_TAB_URL) {
+      // Defer creating an actual Chromium WebContentsView until the tab navigates off Multab New Tab
+      this.deferredNewTabSpecs.set(tab.id, { tab, workspace })
+      this.tabIdToWorkspaceId.set(tab.id, workspace.id)
+      return
+    }
+
+    this.materializeTabView(tab, workspace, normalizedUrl)
+  }
+
+  private materializeTabView(tab: Tab, workspace: Workspace, initialUrl: string): WebContentsView {
     const ses = session.fromPartition(workspace.partition, { cache: true })
     this.ensureSessionPolicies(workspace.id, workspace.partition, ses)
     const effectiveUa = workspace.isolation.userAgent?.trim() || this.getDefaultUserAgent()
@@ -697,9 +718,8 @@ export class BrowserWindowManager
     this.tabViews.set(tab.id, view)
     this.tabIdToWorkspaceId.set(tab.id, workspace.id)
     this.wireWebContentsEvents(tab.id, workspace.id, view)
-
-    const targetUrl = tab.snapshot?.url ?? tab.url
-    this.pendingLoadUrls.set(tab.id, normalizeNavigationInput(targetUrl))
+    this.pendingLoadUrls.set(tab.id, initialUrl)
+    return view
   }
 
   private mountViewInWindow(win: ManagedWindow, tabId: TabId, view: WebContentsView): boolean {
@@ -758,10 +778,24 @@ export class BrowserWindowManager
 
   attachView(tabId: TabId, windowId: WindowId): void {
     const win = this.windows.get(windowId)
-    const view = this.tabViews.get(tabId)
-    if (!win || !view) return
+    if (!win) return
 
+    const view = this.tabViews.get(tabId)
     const prevTabId = win.attachedTabId
+    if (!view) {
+      win.attachedTabId = tabId
+      if (prevTabId && prevTabId !== tabId) {
+        const oldView = this.tabViews.get(prevTabId)
+        if (oldView) {
+          oldView.setVisible(false)
+          if (!oldView.webContents.isDestroyed()) {
+            oldView.webContents.setBackgroundThrottling(true)
+          }
+        }
+      }
+      return
+    }
+
     win.attachedTabId = tabId
     if (!win.overlayOpen) {
       const changed = this.mountViewInWindow(win, tabId, view)
@@ -769,7 +803,12 @@ export class BrowserWindowManager
       view.webContents.setBackgroundThrottling(false)
       if (prevTabId && prevTabId !== tabId) {
         const oldView = this.tabViews.get(prevTabId)
-        oldView?.setVisible(false)
+        if (oldView) {
+          oldView.setVisible(false)
+          if (!oldView.webContents.isDestroyed()) {
+            oldView.webContents.setBackgroundThrottling(true)
+          }
+        }
       }
       if (changed) {
         view.webContents.invalidate()
@@ -822,6 +861,7 @@ export class BrowserWindowManager
       view.webContents.close({ waitForBeforeUnload: false })
     }
     this.tabViews.delete(tabId)
+    this.deferredNewTabSpecs.delete(tabId)
     this.tabIdToWorkspaceId.delete(tabId)
     this.pendingCertErrors.delete(tabId)
     this.pendingLoadUrls.delete(tabId)
@@ -1031,9 +1071,29 @@ export class BrowserWindowManager
   }
 
   navigate(tabId: TabId, urlOrQuery: string): void {
-    const view = this.tabViews.get(tabId)
-    if (!view || view.webContents.isDestroyed()) return
-    void view.webContents.loadURL(normalizeNavigationInput(urlOrQuery)).catch(() => undefined)
+    const targetUrl = normalizeNavigationInput(urlOrQuery)
+    let view = this.tabViews.get(tabId)
+    if (!view) {
+      if (targetUrl === NEW_TAB_URL) return
+      const spec = this.deferredNewTabSpecs.get(tabId)
+      this.deferredNewTabSpecs.delete(tabId)
+      const workspaceId = spec?.workspace.id ?? this.tabIdToWorkspaceId.get(tabId)
+      const workspace = spec?.workspace ?? (workspaceId ? this.workspaceService.get(workspaceId) : undefined)
+      const tab = spec?.tab ?? (workspaceId ? this.tabLifecycle.getTab(workspaceId, tabId) : undefined)
+      if (!workspace || !tab) return
+
+      view = this.materializeTabView(tab, workspace, targetUrl)
+      this.pendingLoadUrls.delete(tabId)
+      for (const win of this.windows.values()) {
+        if (win.attachedTabId === tabId && !win.overlayOpen) {
+          this.mountViewInWindow(win, tabId, view)
+          view.setVisible(true)
+          view.webContents.setBackgroundThrottling(false)
+        }
+      }
+    }
+    if (view.webContents.isDestroyed()) return
+    void view.webContents.loadURL(targetUrl).catch(() => undefined)
   }
 
   goBack(tabId: TabId): void {
@@ -1215,6 +1275,13 @@ export class BrowserWindowManager
     if (!win || win.chromeView.webContents.isDestroyed()) return
     win.chromeView.webContents.focus()
     win.chromeView.webContents.send(IPC_CHANNELS.CHROME_FOCUS_OMNIBOX)
+  }
+
+  triggerBookmarkFocusedTab(): void {
+    const win = this.getFocusedManagedWindow()
+    if (!win || win.chromeView.webContents.isDestroyed()) return
+    win.chromeView.webContents.focus()
+    win.chromeView.webContents.send(IPC_CHANNELS.CHROME_TOGGLE_BOOKMARK)
   }
 
   openDevTools(tabId: TabId): void {

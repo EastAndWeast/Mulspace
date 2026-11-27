@@ -6,10 +6,11 @@ export interface DialogProps {
   title: string
   onClose: () => void
   footer?: ReactNode
+  backdropClassName?: string
   children: ReactNode
 }
 
-export function Dialog({ open, title, onClose, footer, children }: DialogProps) {
+export function Dialog({ open, title, onClose, footer, backdropClassName, children }: DialogProps) {
   useEffect(() => {
     if (!open) return
     const onKeyDown = (event: KeyboardEvent): void => {
@@ -23,7 +24,7 @@ export function Dialog({ open, title, onClose, footer, children }: DialogProps) 
 
   return (
     <div
-      className="wb-dialog-backdrop"
+      className={backdropClassName ? `wb-dialog-backdrop ${backdropClassName}` : 'wb-dialog-backdrop'}
       role="dialog"
       aria-modal="true"
       aria-label={title}

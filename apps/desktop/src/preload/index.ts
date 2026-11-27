@@ -8,7 +8,11 @@ import {
   type ImportProxySubscriptionInput,
   type McpHostConfig,
   type McpServerConfig,
+  type MultabPrefsPatch,
+  type MultabState,
   type RunBatchJobInput,
+  type SaveMultabCategoryInput,
+  type SaveMultabItemInput,
   type SkillDefinition,
   type TabId,
   type UpdateWorkspaceInput,
@@ -146,6 +150,44 @@ const api: BrowserApi = {
   getUpdateState: () => ipcRenderer.invoke(IPC_CHANNELS.UPDATE_GET_STATE),
   checkForUpdates: () => ipcRenderer.invoke(IPC_CHANNELS.UPDATE_CHECK_NOW),
   openUpdateDownload: () => ipcRenderer.invoke(IPC_CHANNELS.UPDATE_OPEN_DOWNLOAD),
+  // Multab
+  onToggleBookmark: (listener) => {
+    const wrapped = (): void => listener()
+    ipcRenderer.on(IPC_CHANNELS.CHROME_TOGGLE_BOOKMARK, wrapped)
+    return () => ipcRenderer.removeListener(IPC_CHANNELS.CHROME_TOGGLE_BOOKMARK, wrapped)
+  },
+  getMultabState: () => ipcRenderer.invoke(IPC_CHANNELS.MULTAB_GET_STATE),
+  onMultabUpdated: (listener) => {
+    const wrapped = (_event: Electron.IpcRendererEvent, state: MultabState): void => {
+      listener(state)
+    }
+    ipcRenderer.on(IPC_CHANNELS.MULTAB_UPDATED, wrapped)
+    return () => ipcRenderer.removeListener(IPC_CHANNELS.MULTAB_UPDATED, wrapped)
+  },
+  saveMultabCategory: (input: SaveMultabCategoryInput) =>
+    ipcRenderer.invoke(IPC_CHANNELS.MULTAB_SAVE_CATEGORY, input),
+  deleteMultabCategory: (categoryId: string) =>
+    ipcRenderer.invoke(IPC_CHANNELS.MULTAB_DELETE_CATEGORY, categoryId),
+  reorderMultabCategories: (orderedIds: string[]) =>
+    ipcRenderer.invoke(IPC_CHANNELS.MULTAB_REORDER_CATEGORIES, orderedIds),
+  saveMultabItem: (input: SaveMultabItemInput) =>
+    ipcRenderer.invoke(IPC_CHANNELS.MULTAB_SAVE_ITEM, input),
+  deleteMultabItem: (itemId: string) =>
+    ipcRenderer.invoke(IPC_CHANNELS.MULTAB_DELETE_ITEM, itemId),
+  reorderMultabItems: (categoryId: string, orderedIds: string[]) =>
+    ipcRenderer.invoke(IPC_CHANNELS.MULTAB_REORDER_ITEMS, categoryId, orderedIds),
+  updateMultabPrefs: (patch: MultabPrefsPatch) =>
+    ipcRenderer.invoke(IPC_CHANNELS.MULTAB_UPDATE_PREFS, patch),
+  testMultabSyncRelay: (relayUrl: string) =>
+    ipcRenderer.invoke(IPC_CHANNELS.MULTAB_TEST_RELAY, relayUrl),
+  pushMultabSyncCode: (relayUrl?: string) =>
+    ipcRenderer.invoke(IPC_CHANNELS.MULTAB_SYNC_PUSH, relayUrl),
+  pullMultabSyncCode: (code: string, relayUrl?: string) =>
+    ipcRenderer.invoke(IPC_CHANNELS.MULTAB_SYNC_PULL, code, relayUrl),
+  importMultabBookmarksHtml: () => ipcRenderer.invoke(IPC_CHANNELS.MULTAB_IMPORT_HTML_FILE),
+  importMultabJson: () => ipcRenderer.invoke(IPC_CHANNELS.MULTAB_IMPORT_JSON_FILE),
+  exportMultabJson: () => ipcRenderer.invoke(IPC_CHANNELS.MULTAB_EXPORT_JSON_FILE),
+  fetchMultabSiteMeta: (url: string) => ipcRenderer.invoke(IPC_CHANNELS.MULTAB_FETCH_SITE_META, url),
 }
 
 contextBridge.exposeInMainWorld('browserApi', api)
