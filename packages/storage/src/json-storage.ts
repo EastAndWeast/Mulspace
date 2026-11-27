@@ -205,8 +205,8 @@ export class JsonStorageRepository implements IStorageRepository {
   }
 
   private transformSecretsForDisk(state: PersistedBrowserState): PersistedBrowserState {
-    const copy = structuredClone(state)
-    copy.workspaces = copy.workspaces.map((ws) => {
+    const copy: PersistedBrowserState = { ...state }
+    copy.workspaces = state.workspaces.map((ws) => {
       if (ws.proxy?.customUrl && ws.proxy.customUrl.includes('@')) {
         return {
           ...ws,
@@ -215,13 +215,21 @@ export class JsonStorageRepository implements IStorageRepository {
       }
       return ws
     })
-    if (copy.settings?.mcpHost?.authToken) {
-      copy.settings.mcpHost.authToken = this.encryptSecret(copy.settings.mcpHost.authToken)
-    }
-    if (Array.isArray(copy.settings?.llmProviders)) {
-      copy.settings.llmProviders = copy.settings.llmProviders.map((p) =>
-        p.apiKey ? { ...p, apiKey: this.encryptSecret(p.apiKey) } : p,
-      )
+    if (state.settings?.mcpHost?.authToken || Array.isArray(state.settings?.llmProviders)) {
+      copy.settings = {
+        ...state.settings,
+        mcpHost: state.settings.mcpHost?.authToken
+          ? {
+              ...state.settings.mcpHost,
+              authToken: this.encryptSecret(state.settings.mcpHost.authToken),
+            }
+          : state.settings.mcpHost,
+        llmProviders: Array.isArray(state.settings.llmProviders)
+          ? state.settings.llmProviders.map((p) =>
+              p.apiKey ? { ...p, apiKey: this.encryptSecret(p.apiKey) } : p,
+            )
+          : state.settings.llmProviders,
+      }
     }
     return copy
   }
@@ -396,7 +404,7 @@ export class JsonStorageRepository implements IStorageRepository {
         const batch = this.pendingFlushResolvers.splice(0, this.pendingFlushResolvers.length)
         try {
           const diskState = this.transformSecretsForDisk(this.state)
-          const payload = JSON.stringify(diskState, null, 2)
+          const payload = JSON.stringify(diskState)
           await mkdir(dirname(this.filePath), { recursive: true, mode: 0o700 })
           const tmpPath = `${this.filePath}.${process.pid}.${Date.now()}.tmp`
           await writeFile(tmpPath, payload, { encoding: 'utf8', mode: 0o600 })

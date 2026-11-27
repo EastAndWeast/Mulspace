@@ -1,4 +1,14 @@
-import { type CSSProperties, useCallback, useEffect, useMemo, useRef, useState } from 'react'
+import {
+  type CSSProperties,
+  Suspense,
+  lazy,
+  useCallback,
+  useEffect,
+  useLayoutEffect,
+  useMemo,
+  useRef,
+  useState,
+} from 'react'
 import { NEW_TAB_URL } from '@wb/contracts'
 import type {
   AgentMessage,
@@ -7,7 +17,7 @@ import type {
   Tab,
   Workspace,
 } from '@wb/contracts'
-import { A2UISurface, Button, IconButton, ThemeProvider } from '@wb/ui-kit'
+import { Button, IconButton, ThemeProvider } from '@wb/ui-kit'
 import {
   ArrowLeft,
   ArrowRight,
@@ -17,7 +27,6 @@ import {
   Compass,
   ExternalLink,
   Globe,
-  Lock,
   Moon,
   Network,
   PanelRight,
@@ -25,7 +34,6 @@ import {
   Plus,
   Puzzle,
   RotateCw,
-  Search,
   Send,
   Settings,
   SlidersHorizontal,
@@ -36,14 +44,52 @@ import {
   VolumeX,
   X,
 } from 'lucide-react'
-import { AiHubDialog } from './components/AiHubDialog.js'
-import { ExtensionsDialog } from './components/ExtensionsDialog.js'
+import { AddressBar } from './components/AddressBar.js'
 import { NewTabPage } from './components/NewTabPage.js'
-import { ProxyManagerDialog } from './components/ProxyManagerDialog.js'
-import { SettingsDialog } from './components/SettingsDialog.js'
-import { WorkspaceEditorDialog } from './components/WorkspaceEditorDialog.js'
 import { WorkspaceGlyph } from './components/WorkspaceGlyph.js'
 import brandIcon from '../../../build/icon.svg'
+
+const A2UISurface = lazy(() =>
+  import('@wb/ui-kit').then((m) => ({ default: m.A2UISurface })),
+)
+const AiHubDialog = lazy(() =>
+  import('./components/AiHubDialog.js').then((m) => ({ default: m.AiHubDialog })),
+)
+const ExtensionsDialog = lazy(() =>
+  import('./components/ExtensionsDialog.js').then((m) => ({ default: m.ExtensionsDialog })),
+)
+const ProxyManagerDialog = lazy(() =>
+  import('./components/ProxyManagerDialog.js').then((m) => ({ default: m.ProxyManagerDialog })),
+)
+const SettingsDialog = lazy(() =>
+  import('./components/SettingsDialog.js').then((m) => ({ default: m.SettingsDialog })),
+)
+const WorkspaceEditorDialog = lazy(() =>
+  import('./components/WorkspaceEditorDialog.js').then((m) => ({
+    default: m.WorkspaceEditorDialog,
+  })),
+)
+
+interface TabDragSession {
+  workspaceId: string
+  tabId: string
+  initialIndex: number
+  currentIndex: number
+  pointerStartX: number
+  layoutAnchorX: number
+  grabOffsetFromCenter: number
+  minOffset: number
+  maxOffset: number
+  active: boolean
+  minEpoch: number
+  orderedIds: string[]
+}
+
+interface TabDragVisualState {
+  tabId: string
+  offsetX: number
+  orderedIds: string[]
+}
 
 function TabSymbol({ tab }: { tab: Tab }) {
   const [faviconFailedUrl, setFaviconFailedUrl] = useState<string | null>(null)
@@ -69,7 +115,6 @@ function TabSymbol({ tab }: { tab: Tab }) {
 
 export function App() {
   const [snapshot, setSnapshot] = useState<BrowserWindowSnapshot | null>(null)
-  const [addressInput, setAddressInput] = useState('')
   const [aiSidebarOpen, setAiSidebarOpen] = useState(false)
   const [wsDialogOpen, setWsDialogOpen] = useState(false)
   const [editingWorkspace, setEditingWorkspace] = useState<Workspace | null>(null)
@@ -82,20 +127,22 @@ export function App() {
   const [skills, setSkills] = useState<SkillDefinition[]>([])
   const [chatPrompt, setChatPrompt] = useState('')
   const [agentBusy, setAgentBusy] = useState(false)
+  const [dragState, setDragState] = useState<TabDragVisualState | null>(null)
 
   const viewportRef = useRef<HTMLDivElement | null>(null)
-  const omniboxRef = useRef<HTMLInputElement | null>(null)
+  const tabbarRef = useRef<HTMLDivElement | null>(null)
+  const tabElementsRef = useRef<Map<string, HTMLDivElement>>(new Map())
+  const dragSessionRef = useRef<TabDragSession | null>(null)
+  const dragCleanupRef = useRef<(() => void) | null>(null)
+  const renderEpochRef = useRef(0)
+
+  useLayoutEffect(() => {
+    renderEpochRef.current += 1
+  })
 
   useEffect(() => {
     void window.browserApi.getState().then(setSnapshot)
     return window.browserApi.onStateUpdated(setSnapshot)
-  }, [])
-
-  useEffect(() => {
-    return window.browserApi.onFocusOmnibox(() => {
-      omniboxRef.current?.focus()
-      omniboxRef.current?.select()
-    })
   }, [])
 
   const activeWorkspace = useMemo(() => {
@@ -124,16 +171,27 @@ export function App() {
   }, [activeWorkspace, workspaceTabs, snapshot?.activeTabId])
 
   useEffect(() => {
-    if (activeTab && document.activeElement !== omniboxRef.current) {
-      setAddressInput(activeTab.url === NEW_TAB_URL ? '' : activeTab.url)
-    }
-  }, [activeTab?.id, activeTab?.url])
-
-  useEffect(() => {
-    if (!activeWorkspace) return
+    if (!activeWorkspace || !aiSidebarOpen) return
     void window.browserApi.getAgentMessages(activeWorkspace.id).then(setAgentMessages)
     void window.browserApi.listSkills(activeWorkspace.id).then(setSkills)
-  }, [activeWorkspace?.id, snapshot?.aiMessageSeq])
+  }, [activeWorkspace?.id, snapshot?.aiMessageSeq, aiSidebarOpen])
+
+  const handleNavigate = useCallback(
+    (input: string): void => {
+      if (!activeWorkspace || !activeTab || !input.trim()) return
+      void window.browserApi.navigateTab(activeWorkspace.id, activeTab.id, input)
+    },
+    [activeWorkspace?.id, activeTab?.id],
+  )
+
+  const handleSwitchWorkspace = useCallback((id: string): void => {
+    void window.browserApi.switchWorkspace(id)
+  }, [])
+
+  const handleCreateWorkspace = useCallback((): void => {
+    setEditingWorkspace(null)
+    setWsDialogOpen(true)
+  }, [])
 
   const syncViewportBounds = useCallback(() => {
     const el = viewportRef.current
@@ -160,6 +218,169 @@ export function App() {
     }
   }, [syncViewportBounds, aiSidebarOpen, snapshot?.settings.themeId])
 
+  useEffect(() => {
+    dragCleanupRef.current?.()
+    dragCleanupRef.current = null
+    dragSessionRef.current = null
+    setDragState(null)
+  }, [activeWorkspace?.id])
+
+  useEffect(() => () => {
+    dragCleanupRef.current?.()
+  }, [])
+
+  const displayedTabs: Tab[] = useMemo(() => {
+    if (!dragState || dragState.orderedIds.length !== workspaceTabs.length) {
+      return workspaceTabs
+    }
+    const byId = new Map(workspaceTabs.map((t) => [t.id, t]))
+    const ordered: Tab[] = []
+    for (const id of dragState.orderedIds) {
+      const match = byId.get(id)
+      if (!match) return workspaceTabs
+      ordered.push(match)
+    }
+    return ordered
+  }, [workspaceTabs, dragState])
+
+  const startTabDrag = (e: React.PointerEvent<HTMLDivElement>, tab: Tab, isTabActive: boolean): void => {
+    if (e.button !== 0 || !activeWorkspace) return
+    if ((e.target as HTMLElement).closest('button')) return
+
+    if (!isTabActive) {
+      void window.browserApi.activateTab(activeWorkspace.id, tab.id)
+    }
+
+    if (workspaceTabs.length < 2) return
+
+    const el = tabElementsRef.current.get(tab.id)
+    const tabbarEl = tabbarRef.current
+    if (!el || !tabbarEl) return
+
+    dragCleanupRef.current?.()
+
+    const orderedIds = workspaceTabs.map((t) => t.id)
+    const initialIndex = orderedIds.indexOf(tab.id)
+    if (initialIndex < 0) return
+
+    const tabRect = el.getBoundingClientRect()
+    const firstEl = tabElementsRef.current.get(orderedIds[0]!)
+    const lastEl = tabElementsRef.current.get(orderedIds[orderedIds.length - 1]!)
+    const minLeft = firstEl ? firstEl.getBoundingClientRect().left : tabbarEl.getBoundingClientRect().left
+    const maxRight = lastEl ? lastEl.getBoundingClientRect().right : tabbarEl.getBoundingClientRect().right
+    const gap = Number.parseFloat(getComputedStyle(tabbarEl).columnGap || '2') || 2
+
+    const session: TabDragSession = {
+      workspaceId: activeWorkspace.id,
+      tabId: tab.id,
+      initialIndex,
+      currentIndex: initialIndex,
+      pointerStartX: e.clientX,
+      layoutAnchorX: e.clientX,
+      grabOffsetFromCenter: e.clientX - (tabRect.left + tabRect.width / 2),
+      minOffset: minLeft - tabRect.left,
+      maxOffset: maxRight - tabRect.right,
+      active: false,
+      minEpoch: renderEpochRef.current,
+      orderedIds,
+    }
+    dragSessionRef.current = session
+
+    const handlePointerMove = (moveEvent: PointerEvent): void => {
+      const current = dragSessionRef.current
+      if (!current) return
+
+      if (!current.active && Math.abs(moveEvent.clientX - current.pointerStartX) < 5) {
+        return
+      }
+      current.active = true
+
+      if (renderEpochRef.current >= current.minEpoch) {
+        const visualCenter = moveEvent.clientX - current.grabOffsetFromCenter
+        let swapped = false
+
+        if (current.currentIndex > 0) {
+          const prevId = current.orderedIds[current.currentIndex - 1]!
+          const prevRect = tabElementsRef.current.get(prevId)?.getBoundingClientRect()
+          if (prevRect && visualCenter < prevRect.left + prevRect.width / 2) {
+            const nextOrder = [...current.orderedIds]
+            ;[nextOrder[current.currentIndex - 1], nextOrder[current.currentIndex]] = [
+              nextOrder[current.currentIndex]!,
+              nextOrder[current.currentIndex - 1]!,
+            ]
+            const step = prevRect.width + gap
+            current.orderedIds = nextOrder
+            current.currentIndex -= 1
+            current.layoutAnchorX -= step
+            current.minOffset += step
+            current.maxOffset += step
+            current.minEpoch = renderEpochRef.current + 1
+            swapped = true
+          }
+        }
+
+        if (!swapped && current.currentIndex < current.orderedIds.length - 1) {
+          const nextId = current.orderedIds[current.currentIndex + 1]!
+          const nextRect = tabElementsRef.current.get(nextId)?.getBoundingClientRect()
+          if (nextRect && visualCenter > nextRect.left + nextRect.width / 2) {
+            const nextOrder = [...current.orderedIds]
+            ;[nextOrder[current.currentIndex], nextOrder[current.currentIndex + 1]] = [
+              nextOrder[current.currentIndex + 1]!,
+              nextOrder[current.currentIndex]!,
+            ]
+            const step = nextRect.width + gap
+            current.orderedIds = nextOrder
+            current.currentIndex += 1
+            current.layoutAnchorX += step
+            current.minOffset -= step
+            current.maxOffset -= step
+            current.minEpoch = renderEpochRef.current + 1
+          }
+        }
+      }
+
+      const rawOffset = moveEvent.clientX - current.layoutAnchorX
+      const clampedOffset = Math.max(current.minOffset - 12, Math.min(current.maxOffset + 12, rawOffset))
+      setDragState({
+        tabId: current.tabId,
+        offsetX: clampedOffset,
+        orderedIds: [...current.orderedIds],
+      })
+    }
+
+    const finishDrag = (): void => {
+      cleanup()
+      const current = dragSessionRef.current
+      dragSessionRef.current = null
+      if (!current || !current.active || current.currentIndex === current.initialIndex) {
+        setDragState(null)
+        return
+      }
+      setDragState({
+        tabId: current.tabId,
+        offsetX: 0,
+        orderedIds: [...current.orderedIds],
+      })
+      void window.browserApi
+        .reorderTab(current.workspaceId, current.tabId, current.currentIndex)
+        .finally(() => setDragState(null))
+    }
+
+    const cleanup = (): void => {
+      window.removeEventListener('pointermove', handlePointerMove)
+      window.removeEventListener('pointerup', finishDrag)
+      window.removeEventListener('pointercancel', finishDrag)
+      window.removeEventListener('blur', finishDrag)
+      dragCleanupRef.current = null
+    }
+
+    dragCleanupRef.current = cleanup
+    window.addEventListener('pointermove', handlePointerMove)
+    window.addEventListener('pointerup', finishDrag)
+    window.addEventListener('pointercancel', finishDrag)
+    window.addEventListener('blur', finishDrag)
+  }
+
   const anyModalOpen = wsDialogOpen || settingsOpen || proxyDialogOpen || extDialogOpen || aiHubOpen
   useEffect(() => {
     void window.browserApi.setOverlayOpen(anyModalOpen)
@@ -183,11 +404,6 @@ export function App() {
     setEditingWorkspace(workspace)
     setWsDialogOpen(true)
   }
-  const navigate = (input: string): void => {
-    if (!activeTab || !input.trim()) return
-    omniboxRef.current?.blur()
-    void window.browserApi.navigateTab(activeWorkspace.id, activeTab.id, input)
-  }
 
   const wsProxyStatus = snapshot.proxyStatus.workspaceStatuses[activeWorkspace.id]
   const proxyLabel =
@@ -204,15 +420,6 @@ export function App() {
     if (ext.enabledWorkspaces.includes(activeWorkspace.id)) return true
     return ext.enabledGlobally
   })
-
-  const trimmedAddress = addressInput.trim()
-  const isSecureHttps = !showNewTab && /^https:\/\//i.test(trimmedAddress)
-  const isNavUrl = !showNewTab && /^[a-z][a-z\d+\-.]*:/i.test(trimmedAddress)
-
-  const handleNavigateSubmit = (e: React.FormEvent): void => {
-    e.preventDefault()
-    navigate(addressInput)
-  }
 
   const handleSendChat = async (promptText: string): Promise<void> => {
     if (!promptText.trim() || agentBusy) return
@@ -323,22 +530,31 @@ export function App() {
 
         {/* Main Browser Chrome & Viewport */}
         <div className="wb-main-column">
-          <div className="wb-tabbar" role="tablist" aria-label="当前工作区标签页">
-            {workspaceTabs.map((tab) => {
+          <div
+            ref={tabbarRef}
+            className={`wb-tabbar ${dragState ? 'wb-tabbar--dragging' : ''}`}
+            role="tablist"
+            aria-label="当前工作区标签页"
+          >
+            {displayedTabs.map((tab) => {
               const isTabActive = activeTab?.id === tab.id
+              const isDragging = dragState?.tabId === tab.id
               return (
                 <div
                   key={tab.id}
-                  role="tab"
-                  aria-selected={isTabActive}
-                  className={`wb-tab ${isTabActive ? 'wb-tab--active' : ''}`}
-                  onMouseDown={(e) => {
-                    if (e.button === 0 && !isTabActive) {
-                      void window.browserApi.activateTab(activeWorkspace.id, tab.id)
-                    }
+                  ref={(node) => {
+                    if (node) tabElementsRef.current.set(tab.id, node)
+                    else tabElementsRef.current.delete(tab.id)
                   }}
-                  onClick={() => {
-                    if (!isTabActive) {
+                  role="tab"
+                  tabIndex={0}
+                  aria-selected={isTabActive}
+                  className={`wb-tab ${isTabActive ? 'wb-tab--active' : ''} ${isDragging ? 'wb-tab--dragging' : ''}`}
+                  style={isDragging ? { transform: `translateX(${dragState.offsetX}px)` } : undefined}
+                  onPointerDown={(e) => startTabDrag(e, tab, isTabActive)}
+                  onKeyDown={(e) => {
+                    if ((e.key === 'Enter' || e.key === ' ') && !isTabActive) {
+                      e.preventDefault()
                       void window.browserApi.activateTab(activeWorkspace.id, tab.id)
                     }
                   }}
@@ -357,6 +573,7 @@ export function App() {
                       type="button"
                       className="wb-tab__audio"
                       title={tab.muted ? '取消静音' : '静音此标签页'}
+                      onPointerDown={(e) => e.stopPropagation()}
                       onMouseDown={(e) => e.stopPropagation()}
                       onClick={(e) => {
                         e.stopPropagation()
@@ -383,6 +600,7 @@ export function App() {
                     type="button"
                     className="wb-tab__close"
                     title="关闭标签"
+                    onPointerDown={(e) => e.stopPropagation()}
                     onMouseDown={(e) => e.stopPropagation()}
                     onClick={(e) => {
                       e.stopPropagation()
@@ -440,27 +658,11 @@ export function App() {
               </IconButton>
             </div>
 
-            <form onSubmit={handleNavigateSubmit} className="wb-address">
-              <span className="wb-address__icon" aria-hidden="true">
-                {isSecureHttps ? (
-                  <Lock size={13} strokeWidth={1.8} className="wb-address__secure" />
-                ) : isNavUrl ? (
-                  <Globe size={14} strokeWidth={1.7} />
-                ) : (
-                  <Search size={14} strokeWidth={1.7} />
-                )}
-              </span>
-              <input
-                ref={omniboxRef}
-                className="wb-omnibox"
-                value={addressInput}
-                onChange={(e) => setAddressInput(e.target.value)}
-                onFocus={(e) => e.currentTarget.select()}
-                placeholder="输入网址或搜索…"
-                aria-label="地址栏"
-                spellCheck={false}
-              />
-            </form>
+            <AddressBar
+              tabId={activeTab?.id}
+              tabUrl={activeTab?.url}
+              onNavigate={handleNavigate}
+            />
 
             <div className="wb-toolbar__meta">
               <button
@@ -549,9 +751,9 @@ export function App() {
                   workspaces={snapshot.workspaces}
                   tabsByWorkspace={snapshot.tabsByWorkspace}
                   proxyLabel={proxyLabel}
-                  onNavigate={navigate}
-                  onSwitchWorkspace={(id) => void window.browserApi.switchWorkspace(id)}
-                  onCreateWorkspace={() => openWorkspaceEditor(null)}
+                  onNavigate={handleNavigate}
+                  onSwitchWorkspace={handleSwitchWorkspace}
+                  onCreateWorkspace={handleCreateWorkspace}
                 />
               ) : null}
             </div>
@@ -637,15 +839,17 @@ export function App() {
                           {msg.content}
                         </div>
                         {msg.a2uiCard ? (
-                          <A2UISurface
-                            schema={msg.a2uiCard}
-                            onAction={(act) => {
-                              if (act === 'open-ai-hub') setAiHubOpen(true)
-                              if (act === 'resume-after-takeover') {
-                                void handleSendChat('我已完成人工验证，请继续读取当前页面。')
-                              }
-                            }}
-                          />
+                          <Suspense fallback={null}>
+                            <A2UISurface
+                              schema={msg.a2uiCard}
+                              onAction={(act) => {
+                                if (act === 'open-ai-hub') setAiHubOpen(true)
+                                if (act === 'resume-after-takeover') {
+                                  void handleSendChat('我已完成人工验证，请继续读取当前页面。')
+                                }
+                              }}
+                            />
+                          </Suspense>
                         ) : null}
                       </div>
                     ))
@@ -677,108 +881,120 @@ export function App() {
         </div>
       </div>
 
-      <WorkspaceEditorDialog
-        open={wsDialogOpen}
-        workspace={editingWorkspace}
-        canDelete={snapshot.workspaces.length > 1}
-        onClose={() => setWsDialogOpen(false)}
-        onCreate={async (input) => {
-          await window.browserApi.createWorkspace(input)
-        }}
-        onUpdate={async (wsId, input) => {
-          await window.browserApi.updateWorkspace(wsId, input)
-        }}
-        onDelete={async (wsId) => {
-          await window.browserApi.deleteWorkspace(wsId)
-        }}
-      />
+      <Suspense fallback={null}>
+        {wsDialogOpen ? (
+          <WorkspaceEditorDialog
+            open={wsDialogOpen}
+            workspace={editingWorkspace}
+            canDelete={snapshot.workspaces.length > 1}
+            onClose={() => setWsDialogOpen(false)}
+            onCreate={async (input) => {
+              await window.browserApi.createWorkspace(input)
+            }}
+            onUpdate={async (wsId, input) => {
+              await window.browserApi.updateWorkspace(wsId, input)
+            }}
+            onDelete={async (wsId) => {
+              await window.browserApi.deleteWorkspace(wsId)
+            }}
+          />
+        ) : null}
 
-      <ProxyManagerDialog
-        open={proxyDialogOpen}
-        workspace={activeWorkspace}
-        proxyStatus={snapshot.proxyStatus}
-        subscriptions={snapshot.proxySubscriptions}
-        nodes={snapshot.proxyNodes}
-        defaultBinaryPath={snapshot.settings.proxyCoreBinaryPath}
-        onClose={() => setProxyDialogOpen(false)}
-        onImport={async (input) => {
-          await window.browserApi.importProxySubscription(input)
-        }}
-        onDeleteSubscription={async (subId) => {
-          await window.browserApi.deleteProxySubscription(subId)
-        }}
-        onTestLatency={async (nodeId) => {
-          await window.browserApi.testProxyNodeLatency(nodeId)
-        }}
-        onSetWorkspaceProxy={async (wsId, binding) => {
-          await window.browserApi.setWorkspaceProxy(wsId, binding)
-        }}
-        onSetBinaryPath={async (p) => {
-          await window.browserApi.setProxyBinaryPath(p)
-        }}
-      />
+        {proxyDialogOpen ? (
+          <ProxyManagerDialog
+            open={proxyDialogOpen}
+            workspace={activeWorkspace}
+            proxyStatus={snapshot.proxyStatus}
+            subscriptions={snapshot.proxySubscriptions}
+            nodes={snapshot.proxyNodes}
+            defaultBinaryPath={snapshot.settings.proxyCoreBinaryPath}
+            onClose={() => setProxyDialogOpen(false)}
+            onImport={async (input) => {
+              await window.browserApi.importProxySubscription(input)
+            }}
+            onDeleteSubscription={async (subId) => {
+              await window.browserApi.deleteProxySubscription(subId)
+            }}
+            onTestLatency={async (nodeId) => {
+              await window.browserApi.testProxyNodeLatency(nodeId)
+            }}
+            onSetWorkspaceProxy={async (wsId, binding) => {
+              await window.browserApi.setWorkspaceProxy(wsId, binding)
+            }}
+            onSetBinaryPath={async (p) => {
+              await window.browserApi.setProxyBinaryPath(p)
+            }}
+          />
+        ) : null}
 
-      <ExtensionsDialog
-        open={extDialogOpen}
-        workspace={activeWorkspace}
-        extensions={snapshot.extensions}
-        onClose={() => setExtDialogOpen(false)}
-        onInstallFolder={async () => {
-          const folder = await window.browserApi.pickExtensionFolder()
-          if (folder) await window.browserApi.installExtensionFromFolder(folder)
-        }}
-        onInstallCrx={async () => {
-          const file = await window.browserApi.pickCrxFile()
-          if (file) await window.browserApi.installExtensionFromCrx(file)
-        }}
-        onToggleForWorkspace={async (extId, wsId, enabled) => {
-          await window.browserApi.toggleExtensionForWorkspace(extId, wsId, enabled)
-        }}
-        onOpenPopup={async (wsId, extId) => {
-          await window.browserApi.openExtensionPopup(wsId, extId)
-        }}
-        onRemove={async (extId) => {
-          await window.browserApi.removeExtension(extId)
-        }}
-      />
+        {extDialogOpen ? (
+          <ExtensionsDialog
+            open={extDialogOpen}
+            workspace={activeWorkspace}
+            extensions={snapshot.extensions}
+            onClose={() => setExtDialogOpen(false)}
+            onInstallFolder={async () => {
+              const folder = await window.browserApi.pickExtensionFolder()
+              if (folder) await window.browserApi.installExtensionFromFolder(folder)
+            }}
+            onInstallCrx={async () => {
+              const file = await window.browserApi.pickCrxFile()
+              if (file) await window.browserApi.installExtensionFromCrx(file)
+            }}
+            onToggleForWorkspace={async (extId, wsId, enabled) => {
+              await window.browserApi.toggleExtensionForWorkspace(extId, wsId, enabled)
+            }}
+            onOpenPopup={async (wsId, extId) => {
+              await window.browserApi.openExtensionPopup(wsId, extId)
+            }}
+            onRemove={async (extId) => {
+              await window.browserApi.removeExtension(extId)
+            }}
+          />
+        ) : null}
 
-      <AiHubDialog
-        open={aiHubOpen}
-        workspaces={snapshot.workspaces}
-        activeWorkspace={activeWorkspace}
-        settings={snapshot.settings}
-        mcpHostStatus={snapshot.mcpHostStatus}
-        onClose={() => setAiHubOpen(false)}
-        onUpdateSettings={async (patch) => {
-          await window.browserApi.updateSettings(patch)
-        }}
-        onRunSkillInWorkspace={async (skillId) => {
-          setAiSidebarOpen(true)
-          const updated = await window.browserApi.runSkill(activeWorkspace.id, skillId)
-          setAgentMessages(updated)
-        }}
-      />
+        {aiHubOpen ? (
+          <AiHubDialog
+            open={aiHubOpen}
+            workspaces={snapshot.workspaces}
+            activeWorkspace={activeWorkspace}
+            settings={snapshot.settings}
+            mcpHostStatus={snapshot.mcpHostStatus}
+            onClose={() => setAiHubOpen(false)}
+            onUpdateSettings={async (patch) => {
+              await window.browserApi.updateSettings(patch)
+            }}
+            onRunSkillInWorkspace={async (skillId) => {
+              setAiSidebarOpen(true)
+              const updated = await window.browserApi.runSkill(activeWorkspace.id, skillId)
+              setAgentMessages(updated)
+            }}
+          />
+        ) : null}
 
-      <SettingsDialog
-        open={settingsOpen}
-        settings={snapshot.settings}
-        themes={snapshot.themes}
-        memorySummary={snapshot.memorySummary}
-        updateState={snapshot.updateState}
-        onClose={() => setSettingsOpen(false)}
-        onUpdateSettings={async (patch) => {
-          await window.browserApi.updateSettings(patch)
-        }}
-        onSweepMemory={async () => {
-          await window.browserApi.sweepMemoryNow()
-        }}
-        onCheckForUpdates={async () => {
-          await window.browserApi.checkForUpdates()
-        }}
-        onOpenUpdateDownload={async () => {
-          await window.browserApi.openUpdateDownload()
-        }}
-      />
+        {settingsOpen ? (
+          <SettingsDialog
+            open={settingsOpen}
+            settings={snapshot.settings}
+            themes={snapshot.themes}
+            memorySummary={snapshot.memorySummary}
+            updateState={snapshot.updateState}
+            onClose={() => setSettingsOpen(false)}
+            onUpdateSettings={async (patch) => {
+              await window.browserApi.updateSettings(patch)
+            }}
+            onSweepMemory={async () => {
+              await window.browserApi.sweepMemoryNow()
+            }}
+            onCheckForUpdates={async () => {
+              await window.browserApi.checkForUpdates()
+            }}
+            onOpenUpdateDownload={async () => {
+              await window.browserApi.openUpdateDownload()
+            }}
+          />
+        ) : null}
+      </Suspense>
     </ThemeProvider>
   )
 }

@@ -15,6 +15,7 @@ export interface KernelEventMap {
   'tab:created': { tab: Tab }
   'tab:updated': { tab: Tab }
   'tab:closed': { workspaceId: WorkspaceId; tabId: string }
+  'tab:reordered': { workspaceId: WorkspaceId; tabIds: string[] }
   'tab:lifecycle-changed': {
     workspaceId: WorkspaceId
     tabId: string

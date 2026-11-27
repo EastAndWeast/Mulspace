@@ -82,7 +82,19 @@ export class ProxyService implements IKernelModule {
     const state = await this.storage.loadState()
     this.subscriptions = state.proxySubscriptions
     this.nodes = state.proxyNodes
-    await this.core.findBinary(this.options.getProxyBinaryPath(), this.options.resourcesPath)
+
+    const needsManagedCore = this.options
+      .getWorkspaces()
+      .some((ws) => ws.proxy.mode === 'managed-node' && Boolean(ws.proxy.nodeId))
+    if (needsManagedCore) {
+      await this.core.findBinary(this.options.getProxyBinaryPath(), this.options.resourcesPath)
+    } else {
+      // Probe Mihomo binary in background without delaying startup
+      void this.core
+        .findBinary(this.options.getProxyBinaryPath(), this.options.resourcesPath)
+        .then(() => this.emitUpdated())
+        .catch(() => undefined)
+    }
 
     ctx.events.on('workspace:created', ({ workspace }) => {
       void this.reconcileAllWorkspaces([workspace])
@@ -107,6 +119,19 @@ export class ProxyService implements IKernelModule {
 
   listNodes(): ProxyNode[] {
     return this.nodes.map((n) => structuredClone(n))
+  }
+
+  listNodeSummaries(): ProxyNode[] {
+    return this.nodes.map((n) => ({
+      id: n.id,
+      subscriptionId: n.subscriptionId,
+      name: n.name,
+      protocol: n.protocol,
+      server: n.server,
+      port: n.port,
+      rawConfig: {},
+      latencyMs: n.latencyMs,
+    }))
   }
 
   getStatus(): ProxyEngineStatus {
@@ -313,14 +338,15 @@ export class ProxyService implements IKernelModule {
       }
     }
 
-    for (const item of pendingSessionApplies) {
-      // Only enforce managed-node proxy when core binary is actually available, else keep direct so pages still load safely
-      if (item.ws.proxy.mode === 'managed-node' && !coreSnap.binaryFound) {
-        await this.options.applier.applySessionProxy(item.ws, { mode: 'direct' })
-      } else {
-        await this.options.applier.applySessionProxy(item.ws, item.cfg)
-      }
-    }
+    await Promise.all(
+      pendingSessionApplies.map((item) => {
+        // Only enforce managed-node proxy when core binary is actually available, else keep direct so pages still load safely
+        if (item.ws.proxy.mode === 'managed-node' && !coreSnap.binaryFound) {
+          return this.options.applier.applySessionProxy(item.ws, { mode: 'direct' })
+        }
+        return this.options.applier.applySessionProxy(item.ws, item.cfg)
+      }),
+    )
 
     this.emitUpdated()
   }

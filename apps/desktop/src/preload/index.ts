@@ -42,6 +42,8 @@ const api: BrowserApi = {
     ipcRenderer.invoke(IPC_CHANNELS.TAB_ACTIVATE, workspaceId, tabId),
   closeTab: (workspaceId: WorkspaceId, tabId: TabId) =>
     ipcRenderer.invoke(IPC_CHANNELS.TAB_CLOSE, workspaceId, tabId),
+  reorderTab: (workspaceId: WorkspaceId, tabId: TabId, toIndex: number) =>
+    ipcRenderer.invoke(IPC_CHANNELS.TAB_REORDER, workspaceId, tabId, toIndex),
   navigateTab: (workspaceId: WorkspaceId, tabId: TabId, urlOrQuery: string) =>
     ipcRenderer.invoke(IPC_CHANNELS.TAB_NAVIGATE, workspaceId, tabId, urlOrQuery),
   goBack: (workspaceId: WorkspaceId, tabId: TabId) =>
@@ -90,6 +92,7 @@ const api: BrowserApi = {
   setWorkspaceProxy: (workspaceId: WorkspaceId, binding: WorkspaceProxyBinding) =>
     ipcRenderer.invoke(IPC_CHANNELS.PROXY_SET_WORKSPACE, workspaceId, binding),
   getProxyStatus: () => ipcRenderer.invoke(IPC_CHANNELS.PROXY_GET_STATUS),
+  getProxyData: () => ipcRenderer.invoke(IPC_CHANNELS.PROXY_GET_DATA),
   setProxyBinaryPath: (binaryPath: string) =>
     ipcRenderer.invoke(IPC_CHANNELS.PROXY_SET_BINARY_PATH, binaryPath),
   // Phase 3: AI / Skills / MCP / Batch

@@ -59,6 +59,7 @@ export const IPC_CHANNELS = {
   TAB_CREATE: 'wb:tab:create',
   TAB_ACTIVATE: 'wb:tab:activate',
   TAB_CLOSE: 'wb:tab:close',
+  TAB_REORDER: 'wb:tab:reorder',
   TAB_NAVIGATE: 'wb:tab:navigate',
   TAB_BACK: 'wb:tab:back',
   TAB_FORWARD: 'wb:tab:forward',
@@ -84,6 +85,7 @@ export const IPC_CHANNELS = {
   PROXY_TEST_LATENCY: 'wb:proxy:test-latency',
   PROXY_SET_WORKSPACE: 'wb:proxy:set-workspace',
   PROXY_GET_STATUS: 'wb:proxy:get-status',
+  PROXY_GET_DATA: 'wb:proxy:get-data',
   PROXY_SET_BINARY_PATH: 'wb:proxy:set-binary-path',
   // Phase 3: AI / Skills / MCP / Batch
   AI_SEND_MESSAGE: 'wb:ai:send-message',
@@ -129,6 +131,7 @@ export interface BrowserApi {
   createTab(workspaceId: WorkspaceId, url?: string, activate?: boolean): Promise<Tab>
   activateTab(workspaceId: WorkspaceId, tabId: TabId): Promise<void>
   closeTab(workspaceId: WorkspaceId, tabId: TabId): Promise<void>
+  reorderTab(workspaceId: WorkspaceId, tabId: TabId, toIndex: number): Promise<void>
   navigateTab(workspaceId: WorkspaceId, tabId: TabId, urlOrQuery: string): Promise<void>
   goBack(workspaceId: WorkspaceId, tabId: TabId): Promise<void>
   goForward(workspaceId: WorkspaceId, tabId: TabId): Promise<void>
@@ -154,6 +157,7 @@ export interface BrowserApi {
   testProxyNodeLatency(nodeId: string): Promise<number | null>
   setWorkspaceProxy(workspaceId: WorkspaceId, binding: WorkspaceProxyBinding): Promise<ProxyEngineStatus>
   getProxyStatus(): Promise<ProxyEngineStatus>
+  getProxyData(): Promise<{ subscriptions: ProxySubscription[]; nodes: ProxyNode[] }>
   setProxyBinaryPath(binaryPath: string): Promise<ProxyEngineStatus>
   // Phase 3: AI / Skills / MCP / Batch
   sendAgentMessage(workspaceId: WorkspaceId, prompt: string): Promise<AgentMessage[]>

@@ -218,6 +218,10 @@
   margin-left: 2px;
 }
 
+.wb-tabbar--dragging {
+  cursor: grabbing;
+}
+
 .wb-tab {
   position: relative;
   height: calc(var(--wb-sys-layout-tabbar-height) - 6px);
@@ -235,7 +239,20 @@
   color: var(--wb-sys-color-on-surface-variant);
   font-size: 12px;
   cursor: pointer;
+  touch-action: none;
   transition: background-color 110ms ease, color 110ms ease;
+}
+
+.wb-tab--dragging,
+.wb-tab--dragging:hover {
+  z-index: 6;
+  cursor: grabbing;
+  box-shadow: 0 4px 14px rgb(8 12 20 / 16%);
+  transition: none;
+}
+
+.wb-tabbar--dragging .wb-tab::after {
+  opacity: 0;
 }
 
 /* Quiet divider between inactive tabs */

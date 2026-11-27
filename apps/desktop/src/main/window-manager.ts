@@ -110,7 +110,17 @@ export class BrowserWindowManager
   private readonly deniedPermissions = new Map<WorkspaceId, Set<string>>()
   private readonly pendingPermissionPrompts = new Map<string, Promise<boolean>>()
   private readonly lastAppliedIsolation = new Map<WorkspaceId, string>()
+  private readonly appliedProxySigByPartition = new Map<string, string>()
+  private readonly appliedUaByPartition = new Map<string, string>()
   private readonly pendingSnapshotWindows = new Set<WindowId>()
+  private readonly deferredSnapshotTimers = new Map<WindowId, ReturnType<typeof setTimeout>>()
+
+  private cachedWorkspaces: Workspace[] | null = null
+  private cachedThemes: ReturnType<typeof defaultThemeRegistry.list> | null = null
+  private cachedExtensions: NonNullable<BrowserWindowSnapshot['extensions']> | null = null
+  private cachedProxyStatus: BrowserWindowSnapshot['proxyStatus'] | null = null
+  private cachedMcpHostStatus: BrowserWindowSnapshot['mcpHostStatus'] | null = null
+  private cachedUpdateState: BrowserWindowSnapshot['updateState'] | null = null
 
   private windowSeq = 0
   private aiMessageSeq = 0
@@ -139,20 +149,27 @@ export class BrowserWindowManager
     this.agentService = deps.agentService
     this.updateService = deps.updateService
 
-    const broadcastAll = (): void => {
+    const broadcastAll = (immediate = true): void => {
       for (const winId of this.windows.keys()) {
-        this.pushSnapshotToWindow(winId)
+        this.pushSnapshotToWindow(winId, immediate)
       }
     }
 
-    this.kernel.events.on('workspace:created', broadcastAll)
+    this.kernel.events.on('workspace:created', () => {
+      this.cachedWorkspaces = null
+      broadcastAll(true)
+    })
     this.kernel.events.on('workspace:updated', ({ workspace }) => {
+      this.cachedWorkspaces = null
       const ua = workspace.isolation.userAgent?.trim() || this.getDefaultUserAgent()
       const isolationSig = `${ua}|${workspace.isolation.webrtcPolicy}`
       if (this.lastAppliedIsolation.get(workspace.id) !== isolationSig) {
         this.lastAppliedIsolation.set(workspace.id, isolationSig)
         const ses = session.fromPartition(workspace.partition, { cache: true })
-        ses.setUserAgent(ua)
+        if (this.appliedUaByPartition.get(workspace.partition) !== ua) {
+          ses.setUserAgent(ua)
+          this.appliedUaByPartition.set(workspace.partition, ua)
+        }
         for (const [tabId, wsId] of this.tabIdToWorkspaceId.entries()) {
           if (wsId !== workspace.id) continue
           const view = this.tabViews.get(tabId)
@@ -162,9 +179,10 @@ export class BrowserWindowManager
           }
         }
       }
-      broadcastAll()
+      broadcastAll(true)
     })
     this.kernel.events.on('workspace:deleted', ({ workspaceId, partition }) => {
+      this.cachedWorkspaces = null
       this.allowedInsecureCertHosts.delete(workspaceId)
       this.grantedPermissions.delete(workspaceId)
       this.deniedPermissions.delete(workspaceId)
@@ -172,6 +190,8 @@ export class BrowserWindowManager
 
       const resolvedPartition = partition ?? `persist:ws-${workspaceId}`
       this.proxyAuthByPartition.delete(resolvedPartition)
+      this.appliedProxySigByPartition.delete(resolvedPartition)
+      this.appliedUaByPartition.delete(resolvedPartition)
       this.configuredSessionPartitions.delete(resolvedPartition)
 
       // Detach any window that was displaying a view from the deleted workspace
@@ -204,23 +224,39 @@ export class BrowserWindowManager
         }, 150)
       }
 
-      broadcastAll()
+      broadcastAll(true)
     })
     this.kernel.events.on('workspace:switched', ({ windowId }) => {
-      this.pushSnapshotToWindow(windowId)
+      this.pushSnapshotToWindow(windowId, true)
     })
-    this.kernel.events.on('tab:created', broadcastAll)
-    this.kernel.events.on('tab:updated', broadcastAll)
-    this.kernel.events.on('tab:closed', broadcastAll)
-    this.kernel.events.on('tab:lifecycle-changed', broadcastAll)
-    this.kernel.events.on('settings:updated', broadcastAll)
-    this.kernel.events.on('proxy:updated', broadcastAll)
-    this.kernel.events.on('extensions:updated', broadcastAll)
-    this.kernel.events.on('themes:updated', broadcastAll)
-    this.kernel.events.on('update:state-changed', broadcastAll)
+    this.kernel.events.on('tab:created', () => broadcastAll(true))
+    this.kernel.events.on('tab:updated', () => broadcastAll(false))
+    this.kernel.events.on('tab:closed', () => broadcastAll(true))
+    this.kernel.events.on('tab:reordered', () => broadcastAll(true))
+    this.kernel.events.on('tab:lifecycle-changed', () => broadcastAll(true))
+    this.kernel.events.on('settings:updated', () => {
+      this.cachedMcpHostStatus = null
+      broadcastAll(true)
+    })
+    this.kernel.events.on('proxy:updated', () => {
+      this.cachedProxyStatus = null
+      broadcastAll(true)
+    })
+    this.kernel.events.on('extensions:updated', () => {
+      this.cachedExtensions = null
+      broadcastAll(true)
+    })
+    this.kernel.events.on('themes:updated', () => {
+      this.cachedThemes = null
+      broadcastAll(true)
+    })
+    this.kernel.events.on('update:state-changed', () => {
+      this.cachedUpdateState = null
+      broadcastAll(true)
+    })
     this.kernel.events.on('ai:message', () => {
       this.aiMessageSeq++
-      broadcastAll()
+      broadcastAll(true)
     })
   }
 
@@ -237,6 +273,22 @@ export class BrowserWindowManager
   }
 
   async applySessionProxy(workspace: Workspace, config: SessionProxyConfig): Promise<void> {
+    const sig =
+      config.mode === 'fixed_servers'
+        ? `${config.mode}|${config.proxyRules ?? ''}|${config.proxyBypassRules ?? ''}|${config.auth?.username ?? ''}:${config.auth?.password ?? ''}`
+        : config.mode
+
+    const prevSig = this.appliedProxySigByPartition.get(workspace.partition)
+    if (!prevSig && config.mode === 'system') {
+      // Fresh Electron sessions default to system proxy; avoid redundant cache/connection tear-down at startup
+      this.appliedProxySigByPartition.set(workspace.partition, sig)
+      return
+    }
+    if (prevSig === sig) {
+      return
+    }
+    this.appliedProxySigByPartition.set(workspace.partition, sig)
+
     const ses = session.fromPartition(workspace.partition, { cache: true })
     if (config.auth) {
       this.proxyAuthByPartition.set(workspace.partition, config.auth)
@@ -304,7 +356,10 @@ export class BrowserWindowManager
     await popupView.webContents.loadURL(`chrome-extension://${runtimeId}/${ext.popupPath.replace(/^\/+/, '')}`)
   }
 
-  async createBrowserWindow(targetWorkspaceId?: WorkspaceId): Promise<WindowId> {
+  async createBrowserWindow(
+    targetWorkspaceId?: WorkspaceId,
+    waitBeforeAttachTab?: Promise<void>,
+  ): Promise<WindowId> {
     const windowId = `win_${++this.windowSeq}`
     const workspaceId = targetWorkspaceId ?? this.workspaceService.getDefaultWorkspaceId()
 
@@ -411,6 +466,11 @@ export class BrowserWindowManager
       managed.mountedTabIds.clear()
       managed.lastBoundsByTab.clear()
       this.pendingSnapshotWindows.delete(windowId)
+      const deferred = this.deferredSnapshotTimers.get(windowId)
+      if (deferred) {
+        clearTimeout(deferred)
+        this.deferredSnapshotTimers.delete(windowId)
+      }
       this.chromeWebContentsToWindowId.delete(chromeView.webContents.id)
       this.windows.delete(windowId)
       this.workspaceService.unbindWindow(windowId)
@@ -428,6 +488,7 @@ export class BrowserWindowManager
     })
 
     syncChromeSize()
+    await this.workspaceService.bindWindowToWorkspace(windowId, workspaceId)
 
     if (is.dev && process.env['ELECTRON_RENDERER_URL']) {
       await chromeView.webContents.loadURL(process.env['ELECTRON_RENDERER_URL'])
@@ -435,12 +496,18 @@ export class BrowserWindowManager
       await chromeView.webContents.loadFile(join(__dirname, '../renderer/index.html'))
     }
 
+    if (waitBeforeAttachTab) {
+      await waitBeforeAttachTab
+      this.cachedProxyStatus = null
+      this.cachedExtensions = null
+      this.cachedMcpHostStatus = null
+    }
+
     // Show BaseWindow before creating/attaching workspace WebContentsView so macOS attaches an active, unthrottled surface
     baseWindow.show()
-    await this.workspaceService.bindWindowToWorkspace(windowId, workspaceId)
     await this.ensureActiveTabForWorkspace(workspaceId, windowId)
 
-    this.pushSnapshotToWindow(windowId)
+    this.pushSnapshotToWindow(windowId, true)
     return windowId
   }
 
@@ -522,43 +589,70 @@ export class BrowserWindowManager
   getSnapshot(windowId: WindowId): BrowserWindowSnapshot {
     const win = this.windows.get(windowId)
     const activeWorkspaceId = this.workspaceService.getActiveWorkspaceForWindow(windowId)
+
+    this.cachedWorkspaces ??= this.workspaceService.list()
+    this.cachedThemes ??= defaultThemeRegistry.list()
+    this.cachedExtensions ??= this.extensionService?.list() ?? []
+    this.cachedProxyStatus ??= this.proxyService?.getStatus() ?? {
+      coreKind: 'mihomo',
+      binaryFound: false,
+      binaryPath: null,
+      running: false,
+      controllerUrl: null,
+      workspaceStatuses: {},
+    }
+    this.cachedMcpHostStatus ??= this.agentService?.getMcpHostStatus() ?? {
+      running: false,
+      endpointUrl: null,
+      config: this.getSettings().mcpHost,
+      clientSnippet: '{}',
+    }
+    this.cachedUpdateState ??= this.updateService?.getState() ?? {
+      status: 'idle',
+      currentVersion: '0.1.0',
+      latestVersion: null,
+      repoSlug: 'EastAndWeast/Mulspace',
+    }
+
     return {
       windowId,
       activeWorkspaceId,
       activeTabId: win?.attachedTabId ?? this.tabLifecycle.getActiveTabId(activeWorkspaceId),
-      workspaces: this.workspaceService.list(),
+      workspaces: this.cachedWorkspaces,
       tabsByWorkspace: this.tabLifecycle.getAllTabsByWorkspace(),
       settings: this.getSettings(),
-      themes: defaultThemeRegistry.list(),
+      themes: this.cachedThemes,
       memorySummary: this.tabLifecycle.getMemorySummary(),
-      proxyStatus: this.proxyService?.getStatus() ?? {
-        coreKind: 'mihomo',
-        binaryFound: false,
-        binaryPath: null,
-        running: false,
-        controllerUrl: null,
-        workspaceStatuses: {},
-      },
-      proxySubscriptions: this.proxyService?.listSubscriptions() ?? [],
-      proxyNodes: this.proxyService?.listNodes() ?? [],
-      extensions: this.extensionService?.list() ?? [],
-      mcpHostStatus: this.agentService?.getMcpHostStatus() ?? {
-        running: false,
-        endpointUrl: null,
-        config: this.getSettings().mcpHost,
-        clientSnippet: '{}',
-      },
-      updateState: this.updateService?.getState() ?? {
-        status: 'idle',
-        currentVersion: '0.1.0',
-        latestVersion: null,
-        repoSlug: 'EastAndWeast/Mulspace',
-      },
+      proxyStatus: this.cachedProxyStatus,
+      // Loaded on demand in ProxyManagerDialog via IPC_CHANNELS.PROXY_GET_DATA to avoid bloating frequent snapshots
+      proxySubscriptions: [],
+      proxyNodes: [],
+      extensions: this.cachedExtensions,
+      mcpHostStatus: this.cachedMcpHostStatus,
+      updateState: this.cachedUpdateState,
       aiMessageSeq: this.aiMessageSeq,
     }
   }
 
-  pushSnapshotToWindow(windowId: WindowId): void {
+  pushSnapshotToWindow(windowId: WindowId, immediate = true): void {
+    if (!immediate) {
+      if (this.pendingSnapshotWindows.has(windowId) || this.deferredSnapshotTimers.has(windowId)) {
+        return
+      }
+      const timer = setTimeout(() => {
+        this.deferredSnapshotTimers.delete(windowId)
+        this.pushSnapshotToWindow(windowId, true)
+      }, 16)
+      this.deferredSnapshotTimers.set(windowId, timer)
+      return
+    }
+
+    const deferred = this.deferredSnapshotTimers.get(windowId)
+    if (deferred) {
+      clearTimeout(deferred)
+      this.deferredSnapshotTimers.delete(windowId)
+    }
+
     if (this.pendingSnapshotWindows.has(windowId)) return
     this.pendingSnapshotWindows.add(windowId)
     queueMicrotask(() => {
@@ -581,7 +675,10 @@ export class BrowserWindowManager
     const ses = session.fromPartition(workspace.partition, { cache: true })
     this.ensureSessionPolicies(workspace.id, workspace.partition, ses)
     const effectiveUa = workspace.isolation.userAgent?.trim() || this.getDefaultUserAgent()
-    ses.setUserAgent(effectiveUa)
+    if (this.appliedUaByPartition.get(workspace.partition) !== effectiveUa) {
+      ses.setUserAgent(effectiveUa)
+      this.appliedUaByPartition.set(workspace.partition, effectiveUa)
+    }
 
     const view = new WebContentsView({
       webPreferences: {

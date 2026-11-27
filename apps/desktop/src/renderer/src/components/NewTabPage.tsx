@@ -1,4 +1,4 @@
-import { type CSSProperties, useState } from 'react'
+import { type CSSProperties, memo, useState } from 'react'
 import type { Tab, Workspace } from '@wb/contracts'
 import { ArrowRight, Plus, Search } from 'lucide-react'
 import brandIcon from '../../../../build/icon.svg'
@@ -14,7 +14,7 @@ interface NewTabPageProps {
   onCreateWorkspace: () => void
 }
 
-export function NewTabPage({
+export const NewTabPage = memo(function NewTabPage({
   workspace,
   workspaces,
   tabsByWorkspace,
@@ -118,4 +118,4 @@ export function NewTabPage({
       </div>
     </section>
   )
-}
+})

@@ -101,4 +101,50 @@ describe('TabLifecycleManager', () => {
     expect(manager.getTab(wsId, aiTab.id)?.state).toBe('frozen')
     expect(manager.getTab(wsId, active.id)?.state).toBe('active')
   })
+
+  it('reorders tabs, emits tab:reordered, clamps bounds, and persists new order', async () => {
+    const dir = await mkdtemp(join(tmpdir(), 'wb-tab-reorder-'))
+    const storage = new JsonStorageRepository(dir)
+    const state = await storage.loadState()
+    const settings: AppSettings = { ...DEFAULT_APP_SETTINGS }
+    const adapter = new FakeViewAdapter()
+    const workspaces = new Map<string, Workspace>(state.workspaces.map((w) => [w.id, w]))
+
+    const kernel = new BrowserKernel()
+    fixtures.push({ dir, kernel })
+    const manager = new TabLifecycleManager(storage, {
+      getWorkspace: (id) => workspaces.get(id),
+      getSettings: () => settings,
+      adapter,
+    })
+    kernel.use(manager)
+    await kernel.start()
+
+    const wsId = state.workspaces[0]!.id
+    const seedId = manager.getTabs(wsId)[0]!.id
+    const t2 = await manager.createTab({ workspaceId: wsId, url: 'https://two.com' }, 'win_1', 100)
+    const t3 = await manager.createTab({ workspaceId: wsId, url: 'https://three.com' }, 'win_1', 200)
+
+    const reorderedEvents: string[][] = []
+    kernel.events.on('tab:reordered', (payload) => {
+      if (payload.workspaceId === wsId) reorderedEvents.push(payload.tabIds)
+    })
+
+    // Move second tab to first position
+    const movedLeft = await manager.reorderTab(wsId, t2.id, 0)
+    expect(movedLeft.map((t) => t.id)).toEqual([t2.id, seedId, t3.id])
+
+    // Out-of-bounds target clamps cleanly to last index
+    const movedRight = await manager.reorderTab(wsId, t2.id, 99)
+    expect(movedRight.map((t) => t.id)).toEqual([seedId, t3.id, t2.id])
+    expect(reorderedEvents).toEqual([
+      [t2.id, seedId, t3.id],
+      [seedId, t3.id, t2.id],
+    ])
+
+    await manager.flushPendingWrites()
+    await storage.flushNow()
+    const reloaded = await new JsonStorageRepository(dir).loadState()
+    expect(reloaded.tabsByWorkspace[wsId]!.map((t) => t.id)).toEqual([seedId, t3.id, t2.id])
+  })
 })

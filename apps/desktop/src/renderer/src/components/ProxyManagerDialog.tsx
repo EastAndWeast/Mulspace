@@ -39,6 +39,10 @@ export function ProxyManagerDialog({
   onSetWorkspaceProxy,
   onSetBinaryPath,
 }: ProxyManagerDialogProps) {
+  const [loadedData, setLoadedData] = useState<{
+    subscriptions: ProxySubscription[]
+    nodes: ProxyNode[]
+  } | null>(null)
   const [subName, setSubName] = useState('')
   const [subUrl, setSubUrl] = useState('')
   const [subContent, setSubContent] = useState('')
@@ -48,11 +52,29 @@ export function ProxyManagerDialog({
   const [busy, setBusy] = useState(false)
   const [error, setError] = useState<string | null>(null)
 
+  const refreshProxyData = async (): Promise<void> => {
+    try {
+      const data = await window.browserApi.getProxyData()
+      setLoadedData(data)
+    } catch {
+      // Fall back to props if unavailable
+    }
+  }
+
   useEffect(() => {
     setCustomUrl(workspace.proxy.customUrl ?? '')
     setShowCustomUrl(false)
     setError(null)
   }, [workspace.id, workspace.proxy.customUrl, open])
+
+  useEffect(() => {
+    if (!open) return
+    void refreshProxyData()
+  }, [open, proxyStatus])
+
+  const effectiveSubscriptions =
+    loadedData?.subscriptions ?? (subscriptions.length > 0 ? subscriptions : [])
+  const effectiveNodes = loadedData?.nodes ?? (nodes.length > 0 ? nodes : [])
 
   const wsStatus = proxyStatus.workspaceStatuses[workspace.id]
 
@@ -61,6 +83,7 @@ export function ProxyManagerDialog({
     setError(null)
     try {
       await fn()
+      await refreshProxyData()
     } catch (err) {
       setError(formatIpcError(err))
     } finally {
@@ -253,11 +276,11 @@ export function ProxyManagerDialog({
       </div>
 
       {/* Subscriptions & Nodes */}
-      {subscriptions.length > 0 ? (
+      {effectiveSubscriptions.length > 0 ? (
         <div style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
-          <strong style={{ fontSize: 12 }}>已导入订阅 ({subscriptions.length})</strong>
+          <strong style={{ fontSize: 12 }}>已导入订阅 ({effectiveSubscriptions.length})</strong>
           <div style={{ display: 'flex', flexWrap: 'wrap', gap: 6 }}>
-            {subscriptions.map((sub) => (
+            {effectiveSubscriptions.map((sub) => (
               <Badge key={sub.id}>
                 <span>
                   {sub.name} ({sub.nodeCount} 节点)
@@ -275,11 +298,11 @@ export function ProxyManagerDialog({
         </div>
       ) : null}
 
-      {nodes.length > 0 ? (
+      {effectiveNodes.length > 0 ? (
         <div style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
           <strong style={{ fontSize: 12 }}>节点列表（为「{workspace.name}」绑定独立节点）</strong>
           <div style={{ display: 'flex', flexDirection: 'column', gap: 6, maxHeight: 200, overflowY: 'auto' }}>
-            {nodes.map((node) => {
+            {effectiveNodes.map((node) => {
               const bound =
                 workspace.proxy.mode === 'managed-node' && workspace.proxy.nodeId === node.id
               return (

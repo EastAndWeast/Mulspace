@@ -186,9 +186,8 @@ export class ExtensionService implements IKernelModule {
   }
 
   async syncAllWorkspaces(): Promise<void> {
-    for (const ws of this.options.getWorkspaces()) {
-      await this.syncWorkspace(ws)
-    }
+    if (this.extensions.length === 0) return
+    await Promise.all(this.options.getWorkspaces().map((ws) => this.syncWorkspace(ws)))
   }
 
   async syncWorkspace(workspace: Workspace): Promise<void> {

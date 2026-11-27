@@ -262,6 +262,35 @@ export class TabLifecycleManager implements IKernelModule {
     return nextActiveId
   }
 
+  async reorderTab(workspaceId: WorkspaceId, tabId: TabId, toIndex: number): Promise<Tab[]> {
+    const list = this.tabsByWorkspace.get(workspaceId)
+    if (!list || list.length < 2) {
+      return this.getTabs(workspaceId)
+    }
+
+    const fromIndex = list.findIndex((t) => t.id === tabId)
+    if (fromIndex < 0) {
+      return this.getTabs(workspaceId)
+    }
+
+    const clampedIndex = Math.max(0, Math.min(list.length - 1, Math.trunc(toIndex)))
+    if (clampedIndex === fromIndex) {
+      return this.getTabs(workspaceId)
+    }
+
+    const [moved] = list.splice(fromIndex, 1)
+    if (moved) {
+      list.splice(clampedIndex, 0, moved)
+    }
+
+    this.ctx.events.emit('tab:reordered', {
+      workspaceId,
+      tabIds: list.map((t) => t.id),
+    })
+    this.schedulePersistWorkspaceTabs(workspaceId)
+    return this.getTabs(workspaceId)
+  }
+
   async updateTabMeta(
     workspaceId: WorkspaceId,
     tabId: TabId,
@@ -284,7 +313,18 @@ export class TabLifecycleManager implements IKernelModule {
   ): Promise<Tab | undefined> {
     const tab = this.findTabMut(workspaceId, tabId)
     if (!tab) return undefined
-    Object.assign(tab, patch)
+
+    let changed = false
+    for (const [key, value] of Object.entries(patch) as Array<[keyof typeof patch, unknown]>) {
+      if (value !== undefined && tab[key] !== value) {
+        ;(tab as unknown as Record<string, unknown>)[key] = value
+        changed = true
+      }
+    }
+    if (!changed) {
+      return structuredClone(tab)
+    }
+
     this.ctx.events.emit('tab:updated', { tab: structuredClone(tab) })
     this.schedulePersistWorkspaceTabs(workspaceId)
     return structuredClone(tab)

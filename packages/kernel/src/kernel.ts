@@ -37,6 +37,31 @@ export class BrowserKernel {
     this.started = true
   }
 
+  /**
+   * Initializes the first `coreCount` modules synchronously in registration order,
+   * then initializes remaining independent modules in parallel and returns a settlement promise.
+   */
+  async startWithDeferredBackground(coreCount: number): Promise<{ backgroundReady: Promise<void> }> {
+    if (this.started) return { backgroundReady: Promise.resolve() }
+    const core = this.modules.slice(0, coreCount)
+    const background = this.modules.slice(coreCount)
+
+    for (const module of core) {
+      await module.init(this.context)
+      this.initializedModules.push(module)
+    }
+    this.started = true
+
+    const backgroundReady = Promise.all(
+      background.map(async (module) => {
+        await module.init(this.context)
+        this.initializedModules.push(module)
+      }),
+    ).then(() => undefined)
+
+    return { backgroundReady }
+  }
+
   async stop(): Promise<void> {
     if (!this.started) return
     for (const module of [...this.initializedModules].reverse()) {

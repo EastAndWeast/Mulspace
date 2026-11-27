@@ -144,7 +144,7 @@ async function bootstrap(): Promise<void> {
     .use(agentService)
     .use(updateService)
 
-  await kernel.start()
+  const { backgroundReady } = await kernel.startWithDeferredBackground(2)
 
   // Inject proxy credentials per workspace partition when Electron challenges for proxy auth,
   // but abort immediately if the same credentials are rejected twice in a short window.
@@ -180,6 +180,7 @@ async function bootstrap(): Promise<void> {
   })
 
   if (isSmokeTest) {
+    await backgroundReady
     const mcpStatus = agentService.getMcpHostStatus()
     let mcpHealthOk = false
     if (mcpStatus.endpointUrl) {
@@ -222,7 +223,7 @@ async function bootstrap(): Promise<void> {
   })
 
   installApplicationMenu(windowManager)
-  await windowManager.createBrowserWindow()
+  await windowManager.createBrowserWindow(undefined, backgroundReady)
 
   maintenanceTimer = setInterval(() => {
     void tabLifecycle.runMaintenanceSweep()
@@ -326,6 +327,13 @@ function registerIpcHandlers(deps: {
       await tabLifecycle.createTab({ workspaceId, activate: true }, winId)
     }
   })
+
+  ipcMain.handle(
+    IPC_CHANNELS.TAB_REORDER,
+    async (_event, workspaceId: WorkspaceId, tabId: TabId, toIndex: number) => {
+      await tabLifecycle.reorderTab(workspaceId, tabId, toIndex)
+    },
+  )
 
   ipcMain.handle(
     IPC_CHANNELS.TAB_NAVIGATE,
@@ -448,6 +456,10 @@ function registerIpcHandlers(deps: {
       proxyService.setWorkspaceProxy(workspaceId, binding),
   )
   ipcMain.handle(IPC_CHANNELS.PROXY_GET_STATUS, () => proxyService.getStatus())
+  ipcMain.handle(IPC_CHANNELS.PROXY_GET_DATA, () => ({
+    subscriptions: proxyService.listSubscriptions(),
+    nodes: proxyService.listNodeSummaries(),
+  }))
   ipcMain.handle(IPC_CHANNELS.PROXY_SET_BINARY_PATH, async (_e, binaryPath: string) => {
     currentSettings = { ...currentSettings, proxyCoreBinaryPath: binaryPath.trim() || undefined }
     await storage.saveSettings(currentSettings)
