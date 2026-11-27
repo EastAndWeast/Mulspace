@@ -29,10 +29,12 @@ import {
   ArrowRight,
   ArrowUpRight,
   Bot,
+  Camera,
   Code2,
   Compass,
   ExternalLink,
   Globe,
+  Languages,
   Moon,
   Network,
   PanelRight,
@@ -42,6 +44,7 @@ import {
   RotateCw,
   Send,
   Settings,
+  ShieldCheck,
   SlidersHorizontal,
   Snowflake,
   TerminalSquare,
@@ -51,6 +54,11 @@ import {
   X,
 } from 'lucide-react'
 import { AddressBar } from './components/AddressBar.js'
+import {
+  CaptureCropOverlay,
+  CaptureDialog,
+  formatRecDuration,
+} from './components/CaptureDialog.js'
 import type { MultabItemDraft } from './components/MultabItemDialog.js'
 import { NewTabPage } from './components/NewTabPage.js'
 import { WorkspaceGlyph } from './components/WorkspaceGlyph.js'
@@ -74,8 +82,16 @@ const MultabSyncDialog = lazy(() =>
 const ProxyManagerDialog = lazy(() =>
   import('./components/ProxyManagerDialog.js').then((m) => ({ default: m.ProxyManagerDialog })),
 )
+const SecurityGuardDialog = lazy(() =>
+  import('./components/SecurityGuardDialog.js').then((m) => ({
+    default: m.SecurityGuardDialog,
+  })),
+)
 const SettingsDialog = lazy(() =>
   import('./components/SettingsDialog.js').then((m) => ({ default: m.SettingsDialog })),
+)
+const TranslateDialog = lazy(() =>
+  import('./components/TranslateDialog.js').then((m) => ({ default: m.TranslateDialog })),
 )
 const WorkspaceEditorDialog = lazy(() =>
   import('./components/WorkspaceEditorDialog.js').then((m) => ({
@@ -139,8 +155,16 @@ export function App() {
   const [editingWorkspace, setEditingWorkspace] = useState<Workspace | null>(null)
   const [settingsOpen, setSettingsOpen] = useState(false)
   const [proxyDialogOpen, setProxyDialogOpen] = useState(false)
+  const [securityDialogOpen, setSecurityDialogOpen] = useState(false)
   const [extDialogOpen, setExtDialogOpen] = useState(false)
   const [aiHubOpen, setAiHubOpen] = useState(false)
+  const [captureDialogOpen, setCaptureDialogOpen] = useState(false)
+  const [cropImageDataUrl, setCropImageDataUrl] = useState<string | null>(null)
+  const [translateDialogOpen, setTranslateDialogOpen] = useState(false)
+  const [translatedTabIds, setTranslatedTabIds] = useState<Record<string, boolean>>({})
+  const [chromeToast, setChromeToast] = useState<string | null>(null)
+  const [recording, setRecording] = useState(false)
+  const [recordingSeconds, setRecordingSeconds] = useState(0)
   const [multabItemDialogOpen, setMultabItemDialogOpen] = useState(false)
   const [editingMultabItem, setEditingMultabItem] = useState<MultabItem | null>(null)
   const [multabItemDraft, setMultabItemDraft] = useState<MultabItemDraft | null>(null)
@@ -160,6 +184,12 @@ export function App() {
   const dragSessionRef = useRef<TabDragSession | null>(null)
   const dragCleanupRef = useRef<(() => void) | null>(null)
   const renderEpochRef = useRef(0)
+  const toastTimerRef = useRef<number | null>(null)
+  const recorderRef = useRef<MediaRecorder | null>(null)
+  const recordStreamRef = useRef<MediaStream | null>(null)
+  const micStreamRef = useRef<MediaStream | null>(null)
+  const recordChunksRef = useRef<Blob[]>([])
+  const recordTimerRef = useRef<number | null>(null)
 
   useLayoutEffect(() => {
     renderEpochRef.current += 1
@@ -359,6 +389,16 @@ export function App() {
 
   useEffect(() => () => {
     dragCleanupRef.current?.()
+    if (toastTimerRef.current) window.clearTimeout(toastTimerRef.current)
+    if (recordTimerRef.current) window.clearInterval(recordTimerRef.current)
+    recordStreamRef.current?.getTracks().forEach((t) => t.stop())
+    micStreamRef.current?.getTracks().forEach((t) => t.stop())
+  }, [])
+
+  const showChromeToast = useCallback((message: string): void => {
+    setChromeToast(message)
+    if (toastTimerRef.current) window.clearTimeout(toastTimerRef.current)
+    toastTimerRef.current = window.setTimeout(() => setChromeToast(null), 2600)
   }, [])
 
   const displayedTabs: Tab[] = useMemo(() => {
@@ -559,13 +599,129 @@ export function App() {
     wsDialogOpen ||
     settingsOpen ||
     proxyDialogOpen ||
+    securityDialogOpen ||
     extDialogOpen ||
     aiHubOpen ||
+    captureDialogOpen ||
+    Boolean(cropImageDataUrl) ||
+    translateDialogOpen ||
     multabItemDialogOpen ||
     multabSyncOpen
   useEffect(() => {
     void window.browserApi.setOverlayOpen(anyModalOpen)
   }, [anyModalOpen])
+
+  const captureCurrentPageDataUrl = async (): Promise<string> => {
+    if (!activeWorkspace || !activeTab) {
+      throw new Error('没有可截图的活动标签页')
+    }
+    setCaptureDialogOpen(false)
+    await window.browserApi.setOverlayOpen(false)
+    await new Promise((resolve) => window.setTimeout(resolve, 130))
+    const captured = await window.browserApi.capturePage(activeWorkspace.id, activeTab.id)
+    return captured.dataUrl
+  }
+
+  const handleCaptureFullPage = async (): Promise<void> => {
+    const dataUrl = await captureCurrentPageDataUrl()
+    await window.browserApi.copyCapturedImage(dataUrl)
+    showChromeToast('已复制当前页面整页截图到剪贴板')
+  }
+
+  const handleStartRegionCapture = async (): Promise<void> => {
+    const dataUrl = await captureCurrentPageDataUrl()
+    setCropImageDataUrl(dataUrl)
+  }
+
+  const cleanupRecordingStreams = (): void => {
+    if (recordTimerRef.current) {
+      window.clearInterval(recordTimerRef.current)
+      recordTimerRef.current = null
+    }
+    recordStreamRef.current?.getTracks().forEach((t) => t.stop())
+    micStreamRef.current?.getTracks().forEach((t) => t.stop())
+    recordStreamRef.current = null
+    micStreamRef.current = null
+    recorderRef.current = null
+    setRecording(false)
+    setRecordingSeconds(0)
+  }
+
+  const handleStartRecording = async (sourceId: string, includeMic: boolean): Promise<void> => {
+    if (recording) return
+    const desktopStream = await navigator.mediaDevices.getUserMedia({
+      audio: false,
+      video: {
+        mandatory: {
+          chromeMediaSource: 'desktop',
+          chromeMediaSourceId: sourceId,
+        },
+      } as unknown as MediaTrackConstraints,
+    })
+    recordStreamRef.current = desktopStream
+
+    const tracks: MediaStreamTrack[] = [...desktopStream.getVideoTracks()]
+    if (includeMic) {
+      try {
+        const micStream = await navigator.mediaDevices.getUserMedia({ audio: true, video: false })
+        micStreamRef.current = micStream
+        tracks.push(...micStream.getAudioTracks())
+      } catch {
+        showChromeToast('未授予麦克风权限，将以纯画面继续录屏')
+      }
+    }
+
+    const combined = new MediaStream(tracks)
+    const mimeType = MediaRecorder.isTypeSupported('video/webm;codecs=vp9')
+      ? 'video/webm;codecs=vp9'
+      : 'video/webm'
+    const recorder = new MediaRecorder(combined, { mimeType })
+    recordChunksRef.current = []
+
+    recorder.ondataavailable = (ev) => {
+      if (ev.data && ev.data.size > 0) {
+        recordChunksRef.current.push(ev.data)
+      }
+    }
+
+    recorder.onstop = () => {
+      const chunks = [...recordChunksRef.current]
+      recordChunksRef.current = []
+      cleanupRecordingStreams()
+      if (chunks.length === 0) return
+      const blob = new Blob(chunks, { type: mimeType })
+      void blob.arrayBuffer().then(async (buffer) => {
+        const savedPath = await window.browserApi.saveRecordedVideo(new Uint8Array(buffer))
+        if (savedPath) {
+          showChromeToast('录屏视频已保存')
+        }
+      })
+    }
+
+    desktopStream.getVideoTracks()[0]?.addEventListener('ended', () => {
+      if (recorder.state !== 'inactive') {
+        recorder.stop()
+      }
+    })
+
+    recorderRef.current = recorder
+    recorder.start(1000)
+    setRecording(true)
+    setRecordingSeconds(0)
+    recordTimerRef.current = window.setInterval(() => {
+      setRecordingSeconds((prev) => prev + 1)
+    }, 1000)
+    showChromeToast('已开始录屏，点击搜索栏右侧红色按钮可随时结束')
+  }
+
+  const handleStopRecording = async (): Promise<void> => {
+    const rec = recorderRef.current
+    if (!rec || rec.state === 'inactive') {
+      cleanupRecordingStreams()
+      return
+    }
+    rec.stop()
+  }
 
   if (!snapshot || !activeWorkspace) {
     return (
@@ -690,6 +846,9 @@ export function App() {
             </IconButton>
             <IconButton title="网络代理配置" onClick={() => setProxyDialogOpen(true)}>
               <Network size={16} />
+            </IconButton>
+            <IconButton title="安全防控中心（指纹与隐私隔离）" onClick={() => setSecurityDialogOpen(true)}>
+              <ShieldCheck size={16} />
             </IconButton>
             <IconButton title="扩展程序管理" onClick={() => setExtDialogOpen(true)}>
               <Puzzle size={16} />
@@ -846,6 +1005,36 @@ export function App() {
               onToggleBookmark={openBookmarkModal}
               onNavigate={handleNavigate}
             />
+
+            <div className="wb-toolbar__tools">
+              {recording ? (
+                <button
+                  type="button"
+                  className="wb-rec-pill"
+                  title="点击停止录屏并保存视频"
+                  onClick={() => void handleStopRecording()}
+                >
+                  <span className="wb-rec-pill__dot" aria-hidden="true" />
+                  <span>{formatRecDuration(recordingSeconds)} 停止</span>
+                </button>
+              ) : (
+                <IconButton
+                  title="截图 / 录屏"
+                  active={captureDialogOpen}
+                  onClick={() => setCaptureDialogOpen(true)}
+                >
+                  <Camera size={15} />
+                </IconButton>
+              )}
+
+              <IconButton
+                title="网页翻译 / 划词快译"
+                active={translateDialogOpen || Boolean(activeTab?.id && translatedTabIds[activeTab.id])}
+                onClick={() => setTranslateDialogOpen(true)}
+              >
+                <Languages size={15} />
+              </IconButton>
+            </div>
 
             <div className="wb-toolbar__meta">
               <button
@@ -1129,7 +1318,18 @@ export function App() {
             open={extDialogOpen}
             workspace={activeWorkspace}
             extensions={snapshot.extensions}
+            activeTabUrl={activeTab?.url}
             onClose={() => setExtDialogOpen(false)}
+            onOpenChromeWebStore={() =>
+              void window.browserApi.createTab(
+                activeWorkspace.id,
+                'https://chromewebstore.google.com/',
+                true,
+              )
+            }
+            onInstallFromStore={async (urlOrId) => {
+              await window.browserApi.installExtensionFromStore(activeWorkspace.id, urlOrId)
+            }}
             onInstallFolder={async () => {
               const folder = await window.browserApi.pickExtensionFolder()
               if (folder) await window.browserApi.installExtensionFromFolder(folder)
@@ -1146,6 +1346,21 @@ export function App() {
             }}
             onRemove={async (extId) => {
               await window.browserApi.removeExtension(extId)
+            }}
+          />
+        ) : null}
+
+        {securityDialogOpen ? (
+          <SecurityGuardDialog
+            open={securityDialogOpen}
+            workspaces={snapshot.workspaces}
+            activeWorkspace={activeWorkspace}
+            onClose={() => setSecurityDialogOpen(false)}
+            onUpdateIsolation={async (wsId, isolation) => {
+              await window.browserApi.updateWorkspace(wsId, { isolation })
+            }}
+            onClearWorkspaceData={async (wsId) => {
+              await window.browserApi.clearWorkspaceData(wsId)
             }}
           />
         ) : null}
@@ -1189,6 +1404,30 @@ export function App() {
             onOpenUpdateDownload={async () => {
               await window.browserApi.openUpdateDownload()
             }}
+            onOpenExtensions={() => setExtDialogOpen(true)}
+            onOpenChromeWebStore={() =>
+              void window.browserApi.createTab(
+                activeWorkspace.id,
+                'https://chromewebstore.google.com/',
+                true,
+              )
+            }
+          />
+        ) : null}
+
+        {translateDialogOpen ? (
+          <TranslateDialog
+            open={translateDialogOpen}
+            workspaceId={activeWorkspace.id}
+            tabId={activeTab?.id}
+            hasWebPage={Boolean(activeTab && activeTab.url !== NEW_TAB_URL && /^https?:\/\//i.test(activeTab.url))}
+            isPageTranslated={Boolean(activeTab?.id && translatedTabIds[activeTab.id])}
+            onClose={() => setTranslateDialogOpen(false)}
+            onPageTranslatedChange={(translated) => {
+              if (!activeTab?.id) return
+              setTranslatedTabIds((prev) => ({ ...prev, [activeTab.id]: translated }))
+            }}
+            onToast={showChromeToast}
           />
         ) : null}
 
@@ -1222,6 +1461,32 @@ export function App() {
           />
         ) : null}
       </Suspense>
+
+      <CaptureDialog
+        open={captureDialogOpen}
+        recording={recording}
+        recordingSeconds={recordingSeconds}
+        onClose={() => setCaptureDialogOpen(false)}
+        onCaptureFullPage={handleCaptureFullPage}
+        onStartRegionCapture={handleStartRegionCapture}
+        onStartRecording={handleStartRecording}
+        onStopRecording={handleStopRecording}
+      />
+
+      <CaptureCropOverlay
+        imageDataUrl={cropImageDataUrl}
+        onClose={() => setCropImageDataUrl(null)}
+        onCopyDataUrl={async (dataUrl) => {
+          await window.browserApi.copyCapturedImage(dataUrl)
+          showChromeToast('已复制选区截图到剪贴板')
+        }}
+        onSaveDataUrl={async (dataUrl) => {
+          const saved = await window.browserApi.saveCapturedImage(dataUrl)
+          if (saved) showChromeToast('选区截图已保存为 PNG')
+        }}
+      />
+
+      {chromeToast ? <div className="wb-chrome-toast">{chromeToast}</div> : null}
     </ThemeProvider>
   )
 }

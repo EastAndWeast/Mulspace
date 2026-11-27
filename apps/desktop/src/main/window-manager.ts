@@ -4,9 +4,12 @@ import {
   NEW_TAB_URL,
   type AppSettings,
   type BrowserWindowSnapshot,
+  type CapturePageResult,
   type Tab,
   type TabId,
   type TabSnapshot,
+  type TranslatePageMode,
+  type TranslatePageResult,
   type ViewportBounds,
   type WindowId,
   type Workspace,
@@ -40,6 +43,12 @@ import {
   buildTabContextMenuTemplate,
 } from './context-menu.js'
 import { buildLoadErrorHtml } from './error-page.js'
+import {
+  buildApplyTranslationsScript,
+  EXTRACT_PAGE_TEXTS_SCRIPT,
+  RESTORE_PAGE_TRANSLATIONS_SCRIPT,
+  translateTexts,
+} from './translate-service.js'
 
 const AUTO_ALLOWED_PERMISSIONS = new Set<string>([
   'fullscreen',
@@ -163,13 +172,15 @@ export class BrowserWindowManager
     this.kernel.events.on('workspace:updated', ({ workspace }) => {
       this.cachedWorkspaces = null
       const ua = workspace.isolation.userAgent?.trim() || this.getDefaultUserAgent()
-      const isolationSig = `${ua}|${workspace.isolation.webrtcPolicy}`
+      const acceptLang = workspace.isolation.acceptLanguage?.trim() || undefined
+      const uaSig = `${ua}|${acceptLang ?? ''}`
+      const isolationSig = `${uaSig}|${workspace.isolation.webrtcPolicy}`
       if (this.lastAppliedIsolation.get(workspace.id) !== isolationSig) {
         this.lastAppliedIsolation.set(workspace.id, isolationSig)
         const ses = session.fromPartition(workspace.partition, { cache: true })
-        if (this.appliedUaByPartition.get(workspace.partition) !== ua) {
-          ses.setUserAgent(ua)
-          this.appliedUaByPartition.set(workspace.partition, ua)
+        if (this.appliedUaByPartition.get(workspace.partition) !== uaSig) {
+          ses.setUserAgent(ua, acceptLang)
+          this.appliedUaByPartition.set(workspace.partition, uaSig)
         }
         for (const [tabId, wsId] of this.tabIdToWorkspaceId.entries()) {
           if (wsId !== workspace.id) continue
@@ -696,9 +707,11 @@ export class BrowserWindowManager
     const ses = session.fromPartition(workspace.partition, { cache: true })
     this.ensureSessionPolicies(workspace.id, workspace.partition, ses)
     const effectiveUa = workspace.isolation.userAgent?.trim() || this.getDefaultUserAgent()
-    if (this.appliedUaByPartition.get(workspace.partition) !== effectiveUa) {
-      ses.setUserAgent(effectiveUa)
-      this.appliedUaByPartition.set(workspace.partition, effectiveUa)
+    const acceptLang = workspace.isolation.acceptLanguage?.trim() || undefined
+    const uaSig = `${effectiveUa}|${acceptLang ?? ''}`
+    if (this.appliedUaByPartition.get(workspace.partition) !== uaSig) {
+      ses.setUserAgent(effectiveUa, acceptLang)
+      this.appliedUaByPartition.set(workspace.partition, uaSig)
     }
 
     const view = new WebContentsView({
@@ -1249,7 +1262,11 @@ export class BrowserWindowManager
 
   openDevToolsFocusedTab(): void {
     const ctx = this.getFocusedContext()
-    if (ctx?.tab) this.openDevTools(ctx.tab.id)
+    if (ctx?.tab) {
+      this.openDevTools(ctx.tab.id, ctx.win.id)
+    } else if (ctx?.win) {
+      this.openDevTools('', ctx.win.id)
+    }
   }
 
   async toggleMuteFocusedTab(): Promise<void> {
@@ -1284,11 +1301,138 @@ export class BrowserWindowManager
     win.chromeView.webContents.send(IPC_CHANNELS.CHROME_TOGGLE_BOOKMARK)
   }
 
-  openDevTools(tabId: TabId): void {
-    const view = this.tabViews.get(tabId)
-    if (view && !view.webContents.isDestroyed()) {
-      view.webContents.openDevTools({ mode: 'detach' })
+  openDevTools(tabId: TabId, windowId?: WindowId): void {
+    const view = tabId ? this.tabViews.get(tabId) : undefined
+    const targetWindow =
+      (windowId ? this.windows.get(windowId) : undefined) ?? this.getFocusedManagedWindow()
+    const targetWc =
+      view && !view.webContents.isDestroyed() && this.shouldShowTabView(tabId, view)
+        ? view.webContents
+        : targetWindow?.chromeView.webContents
+
+    if (!targetWc || targetWc.isDestroyed()) return
+    if (targetWc.isDevToolsOpened()) {
+      targetWc.closeDevTools()
+    } else {
+      targetWc.openDevTools({ mode: 'detach', activate: true })
     }
+  }
+
+  getWorkspaceSession(workspaceId: WorkspaceId): Electron.Session {
+    const ws = this.workspaceService.get(workspaceId)
+    const partition = ws?.partition ?? `persist:ws-${workspaceId}`
+    return session.fromPartition(partition, { cache: true })
+  }
+
+  async clearWorkspaceData(workspaceId: WorkspaceId): Promise<void> {
+    const ses = this.getWorkspaceSession(workspaceId)
+    await Promise.allSettled([
+      ses.closeAllConnections(),
+      ses.clearStorageData(),
+      ses.clearCache(),
+      ses.clearAuthCache(),
+    ])
+  }
+
+  async captureTabPage(windowId: WindowId, tabId: TabId): Promise<CapturePageResult> {
+    const view = this.tabViews.get(tabId)
+    const win = this.windows.get(windowId) ?? this.getFocusedManagedWindow()
+    const targetWc =
+      view && !view.webContents.isDestroyed() && this.shouldShowTabView(tabId, view)
+        ? view.webContents
+        : win?.chromeView.webContents
+
+    if (!targetWc || targetWc.isDestroyed()) {
+      throw new Error('没有可截图的页面视图')
+    }
+    const image = await targetWc.capturePage()
+    const size = image.getSize()
+    return {
+      dataUrl: image.toDataURL(),
+      width: size.width,
+      height: size.height,
+    }
+  }
+
+  async getTabSelectionText(tabId: TabId): Promise<string> {
+    const view = this.tabViews.get(tabId)
+    if (!view || view.webContents.isDestroyed() || !this.shouldShowTabView(tabId, view)) {
+      return ''
+    }
+    try {
+      const res = (await view.webContents.executeJavaScript(
+        'window.getSelection()?.toString()?.trim() || ""',
+      )) as unknown
+      return typeof res === 'string' ? res : ''
+    } catch {
+      return ''
+    }
+  }
+
+  async translateTabPage(
+    workspaceId: WorkspaceId,
+    tabId: TabId,
+    targetLang: string,
+    mode: TranslatePageMode,
+  ): Promise<TranslatePageResult> {
+    const view = this.tabViews.get(tabId)
+    if (!view || view.webContents.isDestroyed() || !this.shouldShowTabView(tabId, view)) {
+      throw new Error('当前标签页为主页或尚未加载网页，请打开目标网页后再整页翻译')
+    }
+    const items = (await view.webContents.executeJavaScript(EXTRACT_PAGE_TEXTS_SCRIPT)) as Array<{
+      id: number
+      text: string
+    }>
+    if (!Array.isArray(items) || items.length === 0) {
+      return { translatedCount: 0, mode }
+    }
+    const ses = this.getWorkspaceSession(workspaceId)
+    const translated = await translateTexts(
+      items.map((item) => item.text),
+      targetLang,
+      (url, init) => ses.fetch(url, init),
+    )
+    const entries = items.map((item, idx) => ({
+      id: item.id,
+      translated: translated[idx] ?? item.text,
+    }))
+    const applied = (await view.webContents.executeJavaScript(
+      buildApplyTranslationsScript(entries, mode),
+    )) as number
+    return {
+      translatedCount: typeof applied === 'number' ? applied : entries.length,
+      mode,
+    }
+  }
+
+  async restoreTabPageTranslation(tabId: TabId): Promise<void> {
+    const view = this.tabViews.get(tabId)
+    if (!view || view.webContents.isDestroyed()) return
+    await view.webContents.executeJavaScript(RESTORE_PAGE_TRANSLATIONS_SCRIPT)
+  }
+
+  async downloadChromeStoreCrx(workspaceId: WorkspaceId, extensionId: string): Promise<Buffer> {
+    const prodVersion = process.versions.chrome || '134.0.0.0'
+    const crxUrl = `https://clients2.google.com/service/update2/crx?response=redirect&prodversion=${encodeURIComponent(prodVersion)}&acceptformat=crx2,crx3&x=id%3D${encodeURIComponent(extensionId)}%26uc`
+    const ses = this.getWorkspaceSession(workspaceId)
+    const res = await ses.fetch(crxUrl, {
+      redirect: 'follow',
+      headers: {
+        'User-Agent': this.getDefaultUserAgent(),
+      },
+    })
+    if (!res.ok) {
+      throw new Error(
+        `从 Chrome 应用商店下载扩展失败 (HTTP ${res.status})。请检查当前工作区是否已开启可访问 Google 的代理，或先下载离线 .crx 安装`,
+      )
+    }
+    const buf = Buffer.from(await res.arrayBuffer())
+    if (buf.length < 16 || buf.subarray(0, 4).toString('ascii') !== 'Cr24') {
+      throw new Error(
+        '下载返回的不是有效的 CRX 扩展包，请确认扩展 ID 正确且当前工作区可正常访问 Chrome 应用商店',
+      )
+    }
+    return buf
   }
 
   private isTabAttachedElsewhere(tabId: TabId, targetWindowId: WindowId): boolean {

@@ -19,6 +19,7 @@ export interface MultabItem {
   iconUrl?: string
   iconBg?: string
   pinned?: boolean
+  pinnedOrder?: number
   order: number
   createdAt: number
   updatedAt: number

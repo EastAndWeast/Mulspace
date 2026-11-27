@@ -15,6 +15,8 @@ export interface SettingsDialogProps {
   onSweepMemory: () => Promise<void>
   onCheckForUpdates: () => Promise<void>
   onOpenUpdateDownload: () => Promise<void>
+  onOpenExtensions: () => void
+  onOpenChromeWebStore: () => void
 }
 
 export function SettingsDialog({
@@ -28,6 +30,8 @@ export function SettingsDialog({
   onSweepMemory,
   onCheckForUpdates,
   onOpenUpdateDownload,
+  onOpenExtensions,
+  onOpenChromeWebStore,
 }: SettingsDialogProps) {
   const [themeJsonText, setThemeJsonText] = useState('')
   const [themeMsg, setThemeMsg] = useState<string | null>(null)
@@ -180,6 +184,35 @@ export function SettingsDialog({
           <div className="wb-stat-cell">
             <strong>{memorySummary.totalTabs}</strong>
             <span>总标签</span>
+          </div>
+        </div>
+      </div>
+
+      <div className="wb-dialog-card">
+        <div className="wb-dialog-card__head">
+          <div>
+            <div className="wb-dialog-card__title">谷歌插件扩展兼容</div>
+            <div className="wb-dialog-card__sub">支持前往 Chrome 应用商店、粘贴扩展链接/ID、加载目录或 .crx 安装</div>
+          </div>
+          <div style={{ display: 'flex', gap: 6 }}>
+            <Button
+              variant="outlined"
+              onClick={() => {
+                onClose()
+                onOpenExtensions()
+              }}
+            >
+              管理扩展
+            </Button>
+            <Button
+              variant="tonal"
+              onClick={() => {
+                onClose()
+                onOpenChromeWebStore()
+              }}
+            >
+              前往 Chrome 商店
+            </Button>
           </div>
         </div>
       </div>

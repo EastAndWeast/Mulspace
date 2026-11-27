@@ -1,5 +1,5 @@
 import { useEffect, useState } from 'react'
-import type { CreateWorkspaceInput, WebRtcPolicy, Workspace } from '@wb/contracts'
+import type { CreateWorkspaceInput, UpdateWorkspaceInput, Workspace } from '@wb/contracts'
 import { Button, Dialog, Input } from '@wb/ui-kit'
 import { Check } from 'lucide-react'
 import { WorkspaceGlyph, workspaceColors, workspaceGlyphs } from './WorkspaceGlyph.js'
@@ -10,7 +10,7 @@ export interface WorkspaceEditorDialogProps {
   canDelete: boolean
   onClose: () => void
   onCreate: (input: CreateWorkspaceInput) => Promise<void>
-  onUpdate: (workspaceId: string, input: CreateWorkspaceInput) => Promise<void>
+  onUpdate: (workspaceId: string, input: UpdateWorkspaceInput) => Promise<void>
   onDelete: (workspaceId: string) => Promise<void>
 }
 
@@ -26,8 +26,6 @@ export function WorkspaceEditorDialog({
   const [name, setName] = useState('')
   const [icon, setIcon] = useState('🌐')
   const [seedColor, setSeedColor] = useState('#1F5AE0')
-  const [userAgent, setUserAgent] = useState('')
-  const [webrtcPolicy, setWebrtcPolicy] = useState<WebRtcPolicy>('disable_non_proxied_udp')
   const [busy, setBusy] = useState(false)
 
   useEffect(() => {
@@ -36,14 +34,10 @@ export function WorkspaceEditorDialog({
       setName(workspace.name)
       setIcon(workspace.icon)
       setSeedColor(workspace.seedColor)
-      setUserAgent(workspace.isolation.userAgent ?? '')
-      setWebrtcPolicy(workspace.isolation.webrtcPolicy)
     } else {
       setName('')
       setIcon('🔐')
       setSeedColor('#147A6B')
-      setUserAgent('')
-      setWebrtcPolicy('disable_non_proxied_udp')
     }
   }, [open, workspace])
 
@@ -51,19 +45,21 @@ export function WorkspaceEditorDialog({
     if (!name.trim() || busy) return
     setBusy(true)
     try {
-      const payload: CreateWorkspaceInput = {
-        name: name.trim(),
-        icon,
-        seedColor,
-        isolation: {
-          userAgent: userAgent.trim() || undefined,
-          webrtcPolicy,
-        },
-      }
       if (workspace) {
-        await onUpdate(workspace.id, payload)
+        await onUpdate(workspace.id, {
+          name: name.trim(),
+          icon,
+          seedColor,
+        })
       } else {
-        await onCreate(payload)
+        await onCreate({
+          name: name.trim(),
+          icon,
+          seedColor,
+          isolation: {
+            webrtcPolicy: 'disable_non_proxied_udp',
+          },
+        })
       }
       onClose()
     } finally {
@@ -161,33 +157,6 @@ export function WorkspaceEditorDialog({
           })}
         </div>
       </div>
-
-      <label className="wb-field-label">
-        自定义 User-Agent（可选）
-        <Input
-          value={userAgent}
-          onChange={(e) => setUserAgent(e.target.value)}
-          placeholder="留空则使用默认浏览器标识"
-        />
-      </label>
-
-      <label className="wb-check-row">
-        <input
-          type="checkbox"
-          checked={webrtcPolicy === 'disable_non_proxied_udp'}
-          onChange={(e) =>
-            setWebrtcPolicy(e.target.checked ? 'disable_non_proxied_udp' : 'default')
-          }
-        />
-        <span>阻止 WebRTC 泄露真实 IP</span>
-      </label>
-
-      {workspace ? (
-        <div className="wb-editor-partition">
-          <span>存储隔离分区</span>
-          <code>{workspace.partition}</code>
-        </div>
-      ) : null}
     </Dialog>
   )
 }

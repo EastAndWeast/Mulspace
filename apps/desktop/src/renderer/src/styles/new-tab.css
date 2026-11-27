@@ -924,6 +924,8 @@
   height: 31px;
   object-fit: contain;
   border-radius: 7px;
+  pointer-events: none;
+  user-select: none;
 }
 
 .wb-multab__tile-box--add {
@@ -969,6 +971,7 @@
   text-align: left;
   cursor: pointer;
   touch-action: none;
+  user-select: none;
   transition: border-color 120ms ease, background-color 120ms ease;
 }
 
@@ -982,7 +985,9 @@
 }
 
 .wb-multab__card--dragging {
-  opacity: 0.72;
+  opacity: 0.65;
+  transform: scale(0.96);
+  cursor: grabbing;
   box-shadow: 0 10px 24px rgba(0, 0, 0, 0.35);
 }
 

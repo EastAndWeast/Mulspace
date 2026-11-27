@@ -15,6 +15,21 @@ import { readExtensionManifest } from './manifest-parser.js'
 
 export const ExtensionServiceToken = createServiceToken<ExtensionService>('ExtensionService')
 
+export function extractChromeExtensionId(input: string): string | null {
+  const trimmed = input.trim()
+  if (!trimmed) return null
+  if (/^[a-p]{32}$/i.test(trimmed)) {
+    return trimmed.toLowerCase()
+  }
+  const detailNamed = trimmed.match(/\/detail\/[^/]+\/([a-p]{32})(?:[/?#]|$)/i)
+  if (detailNamed?.[1]) return detailNamed[1].toLowerCase()
+  const detailShort = trimmed.match(/\/detail\/([a-p]{32})(?:[/?#]|$)/i)
+  if (detailShort?.[1]) return detailShort[1].toLowerCase()
+  const queryId = trimmed.match(/[?&]id=([a-p]{32})(?:&|$)/i)
+  if (queryId?.[1]) return queryId[1].toLowerCase()
+  return null
+}
+
 export interface ISessionExtensionAdapter {
   loadIntoSession(partition: string, dirPath: string): Promise<string | null> | string | null
   removeFromSession(partition: string, runtimeExtensionId: string): Promise<void> | void
@@ -107,6 +122,10 @@ export class ExtensionService implements IKernelModule {
 
   async installFromCrx(crxPath: string): Promise<InstalledExtension> {
     const buf = await readFile(crxPath)
+    return this.installFromCrxBuffer(buf)
+  }
+
+  async installFromCrxBuffer(buf: Buffer): Promise<InstalledExtension> {
     const id = `ext_${randomUUID().slice(0, 8)}`
     const destDir = join(this.options.extensionsDir, id)
     try {

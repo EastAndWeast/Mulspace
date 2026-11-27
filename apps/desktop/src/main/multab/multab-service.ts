@@ -403,7 +403,16 @@ export class MultabService implements IKernelModule {
       existing.url = url
       if (input.iconUrl !== undefined) existing.iconUrl = input.iconUrl.trim() || undefined
       if (input.iconBg !== undefined) existing.iconBg = input.iconBg || undefined
-      if (input.pinned !== undefined) existing.pinned = Boolean(input.pinned)
+      if (input.pinned !== undefined) {
+        existing.pinned = Boolean(input.pinned)
+        if (existing.pinned && existing.pinnedOrder === undefined) {
+          const pinnedSibs = this.state.items.filter(
+            (i) => !i.deletedAt && i.pinned && i.id !== existing.id && i.pinnedOrder !== undefined,
+          )
+          existing.pinnedOrder =
+            pinnedSibs.length > 0 ? Math.max(...pinnedSibs.map((s) => s.pinnedOrder!)) + 1 : 0
+        }
+      }
       if (movedCategory) {
         const sibs = this.state.items.filter((i) => i.categoryId === categoryId && !i.deletedAt && i.id !== existing.id)
         existing.order = sibs.length > 0 ? Math.max(...sibs.map((s) => s.order)) + 1 : 0
@@ -412,6 +421,8 @@ export class MultabService implements IKernelModule {
     } else {
       const sibs = this.state.items.filter((i) => i.categoryId === categoryId && !i.deletedAt)
       const nextOrder = sibs.length > 0 ? Math.max(...sibs.map((s) => s.order)) + 1 : 0
+      const pinnedSibs = this.state.items.filter((i) => !i.deletedAt && i.pinned && i.pinnedOrder !== undefined)
+      const isPinned = Boolean(input.pinned)
       this.state.items.push({
         id: `item_${randomUUID().slice(0, 8)}`,
         categoryId,
@@ -419,7 +430,12 @@ export class MultabService implements IKernelModule {
         url,
         iconUrl: input.iconUrl === undefined ? defaultFavicon : input.iconUrl.trim() || undefined,
         iconBg: input.iconBg || '#1F5AE0',
-        pinned: Boolean(input.pinned),
+        pinned: isPinned,
+        pinnedOrder: isPinned
+          ? pinnedSibs.length > 0
+            ? Math.max(...pinnedSibs.map((s) => s.pinnedOrder!)) + 1
+            : 0
+          : undefined,
         order: nextOrder,
         createdAt: now,
         updatedAt: now,
@@ -446,6 +462,36 @@ export class MultabService implements IKernelModule {
     const rank = new Map(orderedIds.map((id, idx) => [id, idx]))
     const now = Date.now()
     let changed = false
+
+    if (categoryId === 'home') {
+      const homeItems = this.state.items
+        .filter((i) => !i.deletedAt && (i.pinned || rank.has(i.id)))
+        .sort((a, b) => {
+          const ra = rank.get(a.id) ?? Number.MAX_SAFE_INTEGER
+          const rb = rank.get(b.id) ?? Number.MAX_SAFE_INTEGER
+          const pa = a.pinnedOrder ?? Number.MAX_SAFE_INTEGER
+          const pb = b.pinnedOrder ?? Number.MAX_SAFE_INTEGER
+          return ra - rb || pa - pb || a.order - b.order
+        })
+
+      homeItems.forEach((item, idx) => {
+        if (rank.has(item.id) && !item.pinned) {
+          item.pinned = true
+          item.updatedAt = now
+          changed = true
+        }
+        if (item.pinnedOrder !== idx) {
+          item.pinnedOrder = idx
+          item.updatedAt = now
+          changed = true
+        }
+      })
+
+      if (changed) {
+        await this.persistAndEmit()
+      }
+      return this.getState()
+    }
 
     const catItems = this.state.items
       .filter((i) => i.categoryId === categoryId && !i.deletedAt)

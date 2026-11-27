@@ -124,6 +124,8 @@ function MultabEntry({
     'data-multab-item-id': item.id,
     role: 'button' as const,
     tabIndex: 0,
+    draggable: false,
+    onDragStart: (e: React.DragEvent<HTMLDivElement>) => e.preventDefault(),
     title: `${item.title}\n${item.url}`,
     onPointerDown: (e: React.PointerEvent<HTMLDivElement>) => onPointerStart(e, item),
     onContextMenu: (e: React.MouseEvent<HTMLDivElement>) => {
@@ -201,6 +203,8 @@ function MultabEntry({
             <img
               src={item.iconUrl}
               alt=""
+              draggable={false}
+              onDragStart={(e) => e.preventDefault()}
               style={showFavicon ? undefined : { position: 'absolute', opacity: 0, pointerEvents: 'none' }}
               onLoad={(e) => {
                 if (e.currentTarget.naturalWidth > 1) setIconLoaded(true)
@@ -230,6 +234,8 @@ function MultabEntry({
           <img
             src={item.iconUrl}
             alt=""
+            draggable={false}
+            onDragStart={(e) => e.preventDefault()}
             style={showFavicon ? undefined : { position: 'absolute', opacity: 0, pointerEvents: 'none' }}
             onLoad={(e) => {
               if (e.currentTarget.naturalWidth > 1) setIconLoaded(true)
@@ -484,8 +490,12 @@ export const NewTabPage = memo(function NewTabPage({
 
   const pinnedItems = useMemo(() => {
     const pinned = multabState.items.filter((i) => i.pinned)
-    if (pinned.length > 0) return pinned
-    return multabState.items.slice(0, 6)
+    const base = pinned.length > 0 ? [...pinned] : multabState.items.slice(0, 6)
+    return base.sort(
+      (a, b) =>
+        (a.pinnedOrder ?? Number.MAX_SAFE_INTEGER) - (b.pinnedOrder ?? Number.MAX_SAFE_INTEGER) ||
+        a.order - b.order,
+    )
   }, [multabState.items])
 
   const recentItems = useMemo(() => {
@@ -495,10 +505,10 @@ export const NewTabPage = memo(function NewTabPage({
   }, [multabState.items])
 
   const visibleItems = useMemo(() => {
-    if (selectedCategoryId === 'home') {
-      return pinnedItems
-    }
-    const base = multabState.items.filter((i) => i.categoryId === selectedCategoryId)
+    const base =
+      selectedCategoryId === 'home'
+        ? pinnedItems
+        : multabState.items.filter((i) => i.categoryId === selectedCategoryId)
     if (!dragOrderedIds || dragOrderedIds.length !== base.length) {
       return base
     }
@@ -557,11 +567,14 @@ export const NewTabPage = memo(function NewTabPage({
     if (e.button !== 0) return
     if ((e.target as HTMLElement).closest('button')) return
 
-    const categoryItems = multabState.items.filter((i) => i.categoryId === selectedCategoryId)
+    const sourceItems =
+      selectedCategoryId === 'home'
+        ? pinnedItems
+        : multabState.items.filter((i) => i.categoryId === selectedCategoryId)
     dragCleanupRef.current?.()
     const startX = e.clientX
     const startY = e.clientY
-    let order = categoryItems.map((i) => i.id)
+    let order = sourceItems.map((i) => i.id)
     let orderChanged = false
     let hoveredCatId: string | null = null
     let active = false
@@ -574,7 +587,7 @@ export const NewTabPage = memo(function NewTabPage({
         active = true
         suppressClickRef.current = true
         setDraggingId(item.id)
-        if (selectedCategoryId !== 'home') {
+        if (order.length >= 2) {
           setDragOrderedIds(order)
         }
       }
@@ -596,7 +609,7 @@ export const NewTabPage = memo(function NewTabPage({
         setDropTargetCatId(foundCat)
       }
 
-      if (!hoveredCatId && selectedCategoryId !== 'home' && order.length >= 2) {
+      if (!hoveredCatId && order.length >= 2) {
         for (const candidateId of order) {
           if (candidateId === item.id) continue
           const node = cardRefs.current.get(candidateId)
@@ -630,7 +643,7 @@ export const NewTabPage = memo(function NewTabPage({
             if (targetCat) showToast(`已移动到「${targetCat.name}」`)
           })
           setDragOrderedIds(null)
-        } else if (selectedCategoryId !== 'home' && orderChanged) {
+        } else if (orderChanged) {
           onReorderItems(selectedCategoryId, order)
         } else {
           setDragOrderedIds(null)

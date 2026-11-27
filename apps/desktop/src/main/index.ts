@@ -12,12 +12,13 @@ import {
   type SaveMultabItemInput,
   type SkillDefinition,
   type TabId,
+  type TranslatePageMode,
   type UpdateWorkspaceInput,
   type ViewportBounds,
   type WorkspaceId,
   type WorkspaceProxyBinding,
 } from '@wb/contracts'
-import { ExtensionService } from '@wb/extension-host'
+import { ExtensionService, extractChromeExtensionId } from '@wb/extension-host'
 import { BrowserKernel } from '@wb/kernel'
 import { ProxyService } from '@wb/proxy-engine'
 import { createDefaultAppSettings, JsonStorageRepository, type StorageSecretCipher } from '@wb/storage'
@@ -25,13 +26,14 @@ import { TabLifecycleManager } from '@wb/tab-lifecycle'
 import { defaultThemeRegistry } from '@wb/themes'
 import { UpdateService } from '@wb/updater'
 import { WorkspaceService } from '@wb/workspace-core'
-import { app, dialog, ipcMain, safeStorage, session, shell } from 'electron'
+import { app, clipboard, desktopCapturer, dialog, ipcMain, nativeImage, safeStorage, session, shell } from 'electron'
 import { mkdtemp, readFile, rm, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { ElectronCdpAutomationBridge } from './cdp-bridge.js'
 import { installApplicationMenu } from './app-menu.js'
 import { MultabService } from './multab/multab-service.js'
+import { translateSingleText } from './translate-service.js'
 import { BrowserWindowManager, normalizeNavigationInput } from './window-manager.js'
 
 // Allow web notification / alert sounds without requiring a prior gesture inside each tab
@@ -309,6 +311,10 @@ function registerIpcHandlers(deps: {
     return windowManager.createBrowserWindow(workspaceId)
   })
 
+  ipcMain.handle(IPC_CHANNELS.WORKSPACE_CLEAR_DATA, async (_event, workspaceId: WorkspaceId) => {
+    await windowManager.clearWorkspaceData(workspaceId)
+  })
+
   ipcMain.handle(
     IPC_CHANNELS.TAB_CREATE,
     async (event, workspaceId: WorkspaceId, url?: string, activate = true) => {
@@ -420,8 +426,9 @@ function registerIpcHandlers(deps: {
     await tabLifecycle.activateTab(workspaceId, tabId, winId)
   })
 
-  ipcMain.handle(IPC_CHANNELS.TAB_OPEN_DEVTOOLS, (_event, _workspaceId: WorkspaceId, tabId: TabId) => {
-    windowManager.openDevTools(tabId)
+  ipcMain.handle(IPC_CHANNELS.TAB_OPEN_DEVTOOLS, (event, _workspaceId: WorkspaceId, tabId: TabId) => {
+    const winId = windowManager.resolveWindowIdFromSender(event.sender.id)
+    windowManager.openDevTools(tabId, winId)
   })
 
   ipcMain.handle(IPC_CHANNELS.TAB_SWEEP_MEMORY, async () => {
@@ -548,6 +555,79 @@ function registerIpcHandlers(deps: {
   ipcMain.handle(IPC_CHANNELS.EXT_OPEN_POPUP, (_e, workspaceId: WorkspaceId, extensionId: string) =>
     windowManager.openExtensionPopup(workspaceId, extensionId),
   )
+  ipcMain.handle(
+    IPC_CHANNELS.EXT_INSTALL_FROM_STORE,
+    async (_e, workspaceId: WorkspaceId, urlOrId: string) => {
+      const extId = extractChromeExtensionId(urlOrId)
+      if (!extId) {
+        throw new Error('请输入有效的 Chrome 应用商店扩展链接或 32 位扩展 ID')
+      }
+      const crxBuf = await windowManager.downloadChromeStoreCrx(workspaceId, extId)
+      return extensionService.installFromCrxBuffer(crxBuf)
+    },
+  )
+
+  // Capture & Translation
+  ipcMain.handle(IPC_CHANNELS.CAPTURE_PAGE, async (event, _workspaceId: WorkspaceId, tabId: TabId) => {
+    const winId = windowManager.resolveWindowIdFromSender(event.sender.id)
+    return windowManager.captureTabPage(winId, tabId)
+  })
+  ipcMain.handle(IPC_CHANNELS.CAPTURE_COPY_IMAGE, (_e, dataUrl: string) => {
+    const image = nativeImage.createFromDataURL(dataUrl)
+    if (image.isEmpty()) return false
+    clipboard.writeImage(image)
+    return true
+  })
+  ipcMain.handle(IPC_CHANNELS.CAPTURE_SAVE_IMAGE, async (_e, dataUrl: string, suggestedName?: string) => {
+    const win = windowManager.getPrimaryBaseWindow()
+    const res = await dialog.showSaveDialog(win!, {
+      defaultPath: suggestedName || `mulspace-screenshot-${Date.now()}.png`,
+      filters: [{ name: 'PNG Image', extensions: ['png'] }],
+    })
+    if (res.canceled || !res.filePath) return null
+    const image = nativeImage.createFromDataURL(dataUrl)
+    await writeFile(res.filePath, image.toPNG())
+    return res.filePath
+  })
+  ipcMain.handle(IPC_CHANNELS.CAPTURE_LIST_SOURCES, async () => {
+    const sources = await desktopCapturer.getSources({
+      types: ['window', 'screen'],
+      thumbnailSize: { width: 320, height: 180 },
+      fetchWindowIcons: false,
+    })
+    return sources.slice(0, 12).map((src) => ({
+      id: src.id,
+      name: src.name,
+      kind: src.id.startsWith('screen:') ? ('screen' as const) : ('window' as const),
+      thumbnailDataUrl: src.thumbnail.toDataURL(),
+    }))
+  })
+  ipcMain.handle(IPC_CHANNELS.CAPTURE_SAVE_VIDEO, async (_e, bytes: Uint8Array, suggestedName?: string) => {
+    const win = windowManager.getPrimaryBaseWindow()
+    const res = await dialog.showSaveDialog(win!, {
+      defaultPath: suggestedName || `mulspace-recording-${Date.now()}.webm`,
+      filters: [{ name: 'WebM Video', extensions: ['webm'] }],
+    })
+    if (res.canceled || !res.filePath) return null
+    await writeFile(res.filePath, Buffer.from(bytes))
+    return res.filePath
+  })
+  ipcMain.handle(IPC_CHANNELS.TRANSLATE_TEXT, async (_e, workspaceId: WorkspaceId, text: string, targetLang: string) => {
+    const ses = windowManager.getWorkspaceSession(workspaceId)
+    return translateSingleText(text, targetLang, (url, init) => ses.fetch(url, init))
+  })
+  ipcMain.handle(
+    IPC_CHANNELS.TRANSLATE_PAGE,
+    async (_e, workspaceId: WorkspaceId, tabId: TabId, targetLang: string, mode: TranslatePageMode) => {
+      return windowManager.translateTabPage(workspaceId, tabId, targetLang, mode)
+    },
+  )
+  ipcMain.handle(IPC_CHANNELS.TRANSLATE_RESTORE_PAGE, async (_e, _workspaceId: WorkspaceId, tabId: TabId) => {
+    await windowManager.restoreTabPageTranslation(tabId)
+  })
+  ipcMain.handle(IPC_CHANNELS.TAB_GET_SELECTION, async (_e, _workspaceId: WorkspaceId, tabId: TabId) => {
+    return windowManager.getTabSelectionText(tabId)
+  })
 
   // Phase 5: Custom Themes
   ipcMain.handle(IPC_CHANNELS.THEME_IMPORT_JSON, async (_e, jsonStr: string) => {

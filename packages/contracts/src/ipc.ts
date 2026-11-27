@@ -40,6 +40,26 @@ export interface ViewportBounds {
   height: number
 }
 
+export interface CaptureSourceItem {
+  id: string
+  name: string
+  kind: 'window' | 'screen'
+  thumbnailDataUrl: string
+}
+
+export interface CapturePageResult {
+  dataUrl: string
+  width: number
+  height: number
+}
+
+export type TranslatePageMode = 'replace' | 'bilingual'
+
+export interface TranslatePageResult {
+  translatedCount: number
+  mode: TranslatePageMode
+}
+
 export interface BrowserWindowSnapshot {
   windowId: WindowId
   activeWorkspaceId: WorkspaceId
@@ -66,6 +86,7 @@ export const IPC_CHANNELS = {
   WORKSPACE_DELETE: 'wb:workspace:delete',
   WORKSPACE_SWITCH: 'wb:workspace:switch',
   WORKSPACE_OPEN_WINDOW: 'wb:workspace:open-window',
+  WORKSPACE_CLEAR_DATA: 'wb:workspace:clear-data',
   TAB_CREATE: 'wb:tab:create',
   TAB_ACTIVATE: 'wb:tab:activate',
   TAB_CLOSE: 'wb:tab:close',
@@ -122,6 +143,17 @@ export const IPC_CHANNELS = {
   EXT_TOGGLE_WORKSPACE: 'wb:ext:toggle-workspace',
   EXT_REMOVE: 'wb:ext:remove',
   EXT_OPEN_POPUP: 'wb:ext:open-popup',
+  EXT_INSTALL_FROM_STORE: 'wb:ext:install-from-store',
+  // Capture & Translation
+  CAPTURE_PAGE: 'wb:capture:page',
+  CAPTURE_COPY_IMAGE: 'wb:capture:copy-image',
+  CAPTURE_SAVE_IMAGE: 'wb:capture:save-image',
+  CAPTURE_LIST_SOURCES: 'wb:capture:list-sources',
+  CAPTURE_SAVE_VIDEO: 'wb:capture:save-video',
+  TRANSLATE_TEXT: 'wb:translate:text',
+  TRANSLATE_PAGE: 'wb:translate:page',
+  TRANSLATE_RESTORE_PAGE: 'wb:translate:restore-page',
+  TAB_GET_SELECTION: 'wb:tab:get-selection',
   // Phase 5: Custom Themes & Auto-Update
   THEME_IMPORT_JSON: 'wb:theme:import-json',
   THEME_EXPORT_JSON: 'wb:theme:export-json',
@@ -156,6 +188,7 @@ export interface BrowserApi {
   deleteWorkspace(workspaceId: WorkspaceId): Promise<void>
   switchWorkspace(workspaceId: WorkspaceId): Promise<void>
   openWorkspaceInNewWindow(workspaceId: WorkspaceId): Promise<WindowId>
+  clearWorkspaceData(workspaceId: WorkspaceId): Promise<void>
   createTab(workspaceId: WorkspaceId, url?: string, activate?: boolean): Promise<Tab>
   activateTab(workspaceId: WorkspaceId, tabId: TabId): Promise<void>
   closeTab(workspaceId: WorkspaceId, tabId: TabId): Promise<void>
@@ -211,6 +244,17 @@ export interface BrowserApi {
   toggleExtensionForWorkspace(extensionId: string, workspaceId: WorkspaceId, enabled: boolean): Promise<InstalledExtension[]>
   removeExtension(extensionId: string): Promise<InstalledExtension[]>
   openExtensionPopup(workspaceId: WorkspaceId, extensionId: string): Promise<void>
+  installExtensionFromStore(workspaceId: WorkspaceId, urlOrId: string): Promise<InstalledExtension>
+  // Capture & Translation
+  capturePage(workspaceId: WorkspaceId, tabId: TabId): Promise<CapturePageResult>
+  copyCapturedImage(dataUrl: string): Promise<boolean>
+  saveCapturedImage(dataUrl: string, suggestedName?: string): Promise<string | null>
+  listCaptureSources(): Promise<CaptureSourceItem[]>
+  saveRecordedVideo(bytes: Uint8Array, suggestedName?: string): Promise<string | null>
+  translateText(workspaceId: WorkspaceId, text: string, targetLang: string): Promise<string>
+  translatePage(workspaceId: WorkspaceId, tabId: TabId, targetLang: string, mode: TranslatePageMode): Promise<TranslatePageResult>
+  restoreTranslatedPage(workspaceId: WorkspaceId, tabId: TabId): Promise<void>
+  getTabSelectionText(workspaceId: WorkspaceId, tabId: TabId): Promise<string>
   // Phase 5: Custom Themes & Auto-Update
   importThemeJson(jsonStr: string): Promise<ThemeManifest[]>
   exportThemeJson(themeId: string): Promise<string>

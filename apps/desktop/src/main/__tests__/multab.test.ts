@@ -88,6 +88,17 @@ describe('Multab workbench, bookmarks & 6-digit E2E sync', () => {
     expect(reloaded.items.find((i) => i.id === twoItems[1]!.id)?.pinned).toBe(true)
     expect(reloaded.categories.some((c) => c.name === '客户工作台')).toBe(true)
     expect(reloaded.items.filter((i) => i.categoryId === customCat.id).map((i) => i.id)).toEqual(reorderedIds)
+
+    // Verify home pinned items reorder persists pinnedOrder independently of category order
+    const pinnedBefore = reloaded.items.filter((i) => i.pinned)
+    expect(pinnedBefore.length).toBeGreaterThanOrEqual(3)
+    const reversedHomeIds = [...pinnedBefore].reverse().map((i) => i.id)
+    const afterHomeReorder = await service2.reorderItems('home', reversedHomeIds)
+    const pinnedAfter = afterHomeReorder.items
+      .filter((i) => i.pinned)
+      .sort((a, b) => (a.pinnedOrder ?? 999) - (b.pinnedOrder ?? 999))
+      .map((i) => i.id)
+    expect(pinnedAfter).toEqual(reversedHomeIds)
     await kernel2.stop()
   })
 

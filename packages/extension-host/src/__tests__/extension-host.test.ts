@@ -9,6 +9,7 @@ import { WorkspaceService } from '@wb/workspace-core'
 import {
   assertSafeArchiveRelativePath,
   ExtensionService,
+  extractChromeExtensionId,
   readExtensionManifest,
   unpackCrxBuffer,
 } from '../index.js'
@@ -121,6 +122,54 @@ describe('extension-host', () => {
     await extService.toggleForWorkspace(installed.id, ws2!.id, false)
     expect(loadedByPartition.get(ws1!.partition)?.size).toBe(1)
     expect(loadedByPartition.get(ws2!.partition)?.size).toBe(0)
+
+    await kernel.stop()
+  })
+
+  it('extracts Chrome Web Store extension IDs and installs from synthetic CRX buffer', async () => {
+    expect(extractChromeExtensionId('cjpalhdlnbpafiamejdnhcphjbkeiagm')).toBe(
+      'cjpalhdlnbpafiamejdnhcphjbkeiagm',
+    )
+    expect(
+      extractChromeExtensionId(
+        'https://chromewebstore.google.com/detail/ublock-origin/cjpalhdlnbpafiamejdnhcphjbkeiagm?hl=zh-CN',
+      ),
+    ).toBe('cjpalhdlnbpafiamejdnhcphjbkeiagm')
+    expect(
+      extractChromeExtensionId(
+        'https://chrome.google.com/webstore/detail/cjpalhdlnbpafiamejdnhcphjbkeiagm',
+      ),
+    ).toBe('cjpalhdlnbpafiamejdnhcphjbkeiagm')
+    expect(extractChromeExtensionId('https://example.com/not-an-extension')).toBeNull()
+
+    const dir = await makeTempDir()
+    const storage = new JsonStorageRepository(join(dir, 'data'))
+    const kernel = new BrowserKernel()
+    const wsService = new WorkspaceService(storage)
+    const extService = new ExtensionService(storage, {
+      extensionsDir: join(dir, 'extensions'),
+      getWorkspaces: () => wsService.list(),
+      adapter: {
+        loadIntoSession: () => 'runtime_store_ext',
+        removeFromSession: () => undefined,
+      },
+    })
+    kernel.use(wsService).use(extService)
+    await kernel.start()
+
+    const crx = buildSyntheticCrx3({
+      'manifest.json': JSON.stringify({
+        manifest_version: 3,
+        name: 'Store Installed Ext',
+        version: '2.0.1',
+        action: { default_popup: 'popup.html' },
+      }),
+      'popup.html': '<div>Store Popup</div>',
+    })
+    const installed = await extService.installFromCrxBuffer(crx)
+    expect(installed.name).toBe('Store Installed Ext')
+    expect(installed.version).toBe('2.0.1')
+    expect(extService.list().some((e) => e.id === installed.id)).toBe(true)
 
     await kernel.stop()
   })

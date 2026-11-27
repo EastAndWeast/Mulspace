@@ -1,6 +1,6 @@
 {
   "name": "workspace-browser",
-  "version": "0.1.11",
+  "version": "0.1.12",
   "license": "GPL-3.0-only",
   "private": true,
   "description": "Multi-account workspace AI browser with microkernel architecture and Material 3 theme separation",

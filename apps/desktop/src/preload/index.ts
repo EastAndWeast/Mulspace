@@ -15,6 +15,7 @@ import {
   type SaveMultabItemInput,
   type SkillDefinition,
   type TabId,
+  type TranslatePageMode,
   type UpdateWorkspaceInput,
   type ViewportBounds,
   type WorkspaceId,
@@ -40,6 +41,8 @@ const api: BrowserApi = {
     ipcRenderer.invoke(IPC_CHANNELS.WORKSPACE_SWITCH, workspaceId),
   openWorkspaceInNewWindow: (workspaceId: WorkspaceId) =>
     ipcRenderer.invoke(IPC_CHANNELS.WORKSPACE_OPEN_WINDOW, workspaceId),
+  clearWorkspaceData: (workspaceId: WorkspaceId) =>
+    ipcRenderer.invoke(IPC_CHANNELS.WORKSPACE_CLEAR_DATA, workspaceId),
   createTab: (workspaceId: WorkspaceId, url?: string, activate?: boolean) =>
     ipcRenderer.invoke(IPC_CHANNELS.TAB_CREATE, workspaceId, url, activate),
   activateTab: (workspaceId: WorkspaceId, tabId: TabId) =>
@@ -140,6 +143,26 @@ const api: BrowserApi = {
     ipcRenderer.invoke(IPC_CHANNELS.EXT_REMOVE, extensionId),
   openExtensionPopup: (workspaceId: WorkspaceId, extensionId: string) =>
     ipcRenderer.invoke(IPC_CHANNELS.EXT_OPEN_POPUP, workspaceId, extensionId),
+  installExtensionFromStore: (workspaceId: WorkspaceId, urlOrId: string) =>
+    ipcRenderer.invoke(IPC_CHANNELS.EXT_INSTALL_FROM_STORE, workspaceId, urlOrId),
+  // Capture & Translation
+  capturePage: (workspaceId: WorkspaceId, tabId: TabId) =>
+    ipcRenderer.invoke(IPC_CHANNELS.CAPTURE_PAGE, workspaceId, tabId),
+  copyCapturedImage: (dataUrl: string) =>
+    ipcRenderer.invoke(IPC_CHANNELS.CAPTURE_COPY_IMAGE, dataUrl),
+  saveCapturedImage: (dataUrl: string, suggestedName?: string) =>
+    ipcRenderer.invoke(IPC_CHANNELS.CAPTURE_SAVE_IMAGE, dataUrl, suggestedName),
+  listCaptureSources: () => ipcRenderer.invoke(IPC_CHANNELS.CAPTURE_LIST_SOURCES),
+  saveRecordedVideo: (bytes: Uint8Array, suggestedName?: string) =>
+    ipcRenderer.invoke(IPC_CHANNELS.CAPTURE_SAVE_VIDEO, bytes, suggestedName),
+  translateText: (workspaceId: WorkspaceId, text: string, targetLang: string) =>
+    ipcRenderer.invoke(IPC_CHANNELS.TRANSLATE_TEXT, workspaceId, text, targetLang),
+  translatePage: (workspaceId: WorkspaceId, tabId: TabId, targetLang: string, mode: TranslatePageMode) =>
+    ipcRenderer.invoke(IPC_CHANNELS.TRANSLATE_PAGE, workspaceId, tabId, targetLang, mode),
+  restoreTranslatedPage: (workspaceId: WorkspaceId, tabId: TabId) =>
+    ipcRenderer.invoke(IPC_CHANNELS.TRANSLATE_RESTORE_PAGE, workspaceId, tabId),
+  getTabSelectionText: (workspaceId: WorkspaceId, tabId: TabId) =>
+    ipcRenderer.invoke(IPC_CHANNELS.TAB_GET_SELECTION, workspaceId, tabId),
   // Phase 5: Custom Themes & Auto-Update
   importThemeJson: (jsonStr: string) =>
     ipcRenderer.invoke(IPC_CHANNELS.THEME_IMPORT_JSON, jsonStr),
